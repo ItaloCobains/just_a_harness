@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 type endlessModel struct{}
 
@@ -10,19 +13,31 @@ type FakeModel struct {
 	seen  [][]Message
 }
 
-func (endlessModel) Next(_ []Message, _ []Tool) Step { return Step{} }
+func (endlessModel) Next(_ context.Context, _ []Message, _ []Tool, _ func(string)) (Step, error) {
+	return Step{}, nil
+}
 
-func (m *FakeModel) Next(msgs []Message, _ []Tool) Step {
+func (m *FakeModel) Next(_ context.Context, msgs []Message, _ []Tool, _ func(string)) (Step, error) {
 	m.seen = append(m.seen, msgs)
 	step := m.steps[m.calls]
 	m.calls++
-	return step
+	return step, nil
+}
+
+func okTool(name string, fn func(string) string) Tool {
+	return Tool{Name: name, Func: func(_ context.Context, input string) (string, error) {
+		return fn(input), nil
+	}}
+}
+
+func callStep(name, input string) Step {
+	return Step{ToolCalls: []ToolCall{{ID: "c0", Name: name, Input: input}}}
 }
 
 func TestConverseAppendsFinalAnswerToHistory(t *testing.T) {
 	model := &FakeModel{steps: []Step{{Done: true, Text: "hi"}}}
 
-	history, answer, err := Converse(model, nil, []Message{{Role: "user", Text: "oi"}}, nil)
+	history, answer, err := Converse(context.Background(), model, nil, []Message{{Role: "user", Text: "oi"}}, Hooks{})
 
 	if err != nil {
 		t.Fatalf("Converse: %v", err)
@@ -37,15 +52,15 @@ func TestConverseAppendsFinalAnswerToHistory(t *testing.T) {
 }
 
 func TestConverseObservesToolCalls(t *testing.T) {
-	tools := []Tool{{Name: "echo", Func: func(input string) string { return input }}}
+	tools := []Tool{okTool("echo", func(input string) string { return input })}
 	model := &FakeModel{steps: []Step{
-		{Tool: "echo", Input: "x"},
+		callStep("echo", "x"),
 		{Done: true, Text: "ok"},
 	}}
 
 	var events []Event
-	Converse(model, tools, []Message{{Role: "user", Text: "oi"}}, func(e Event) {
-		events = append(events, e)
+	Converse(context.Background(), model, tools, []Message{{Role: "user", Text: "oi"}}, Hooks{
+		Observe: func(e Event) { events = append(events, e) },
 	})
 
 	if len(events) != 1 || events[0].Tool != "echo" || events[0].Result != "x" {
@@ -78,16 +93,13 @@ func TestRunLoopsUntilModelStops(t *testing.T) {
 
 func TestRunExecutesRequestedTool(t *testing.T) {
 	var gotInput string
-	tools := []Tool{{
-		Name: "echo",
-		Func: func(input string) string {
-			gotInput = input
-			return input
-		},
-	}}
+	tools := []Tool{okTool("echo", func(input string) string {
+		gotInput = input
+		return input
+	})}
 
 	model := &FakeModel{steps: []Step{
-		{Tool: "echo", Input: "hi"},
+		callStep("echo", "hi"),
 		{Done: true, Text: "ok"},
 	}}
 
@@ -99,12 +111,9 @@ func TestRunExecutesRequestedTool(t *testing.T) {
 }
 
 func TestRunFeedsToolResultBackToModel(t *testing.T) {
-	tools := []Tool{{
-		Name: "echo",
-		Func: func(input string) string { return input },
-	}}
+	tools := []Tool{okTool("echo", func(input string) string { return input })}
 	model := &FakeModel{steps: []Step{
-		{Tool: "echo", Input: "hi"},
+		callStep("echo", "hi"),
 		{Done: true, Text: "ok"},
 	}}
 
@@ -119,7 +128,7 @@ func TestRunFeedsToolResultBackToModel(t *testing.T) {
 	}
 
 	if !found {
-		t.Fatalf("model did not see tool result %q on secound turn, saw %v", "hi", secondTurn)
+		t.Fatalf("model did not see tool result %q on second turn, saw %v", "hi", secondTurn)
 	}
 }
 
@@ -143,12 +152,9 @@ func TestRunTagsUserInputWithUserRole(t *testing.T) {
 }
 
 func TestRunTagsToolResultWithToolRole(t *testing.T) {
-	tools := []Tool{{
-		Name: "echo",
-		Func: func(input string) string { return input },
-	}}
+	tools := []Tool{okTool("echo", func(input string) string { return input })}
 	model := &FakeModel{steps: []Step{
-		{Tool: "echo", Input: "hi"},
+		callStep("echo", "hi"),
 		{Done: true, Text: "ok"},
 	}}
 
@@ -162,12 +168,9 @@ func TestRunTagsToolResultWithToolRole(t *testing.T) {
 }
 
 func TestRunRecordsAssistantToolRequest(t *testing.T) {
-	tools := []Tool{{
-		Name: "echo",
-		Func: func(input string) string { return input },
-	}}
+	tools := []Tool{okTool("echo", func(input string) string { return input })}
 	model := &FakeModel{steps: []Step{
-		{Tool: "echo", Input: "hi"},
+		callStep("echo", "hi"),
 		{Done: true, Text: "ok"},
 	}}
 
@@ -176,7 +179,86 @@ func TestRunRecordsAssistantToolRequest(t *testing.T) {
 	// Esperado na segunda volta: [user "oi", assistant pede echo, tool "hi"]
 	secondTurn := model.seen[1]
 	assistant := secondTurn[len(secondTurn)-2]
-	if assistant.Role != "assistant" || assistant.Tool != "echo" {
+	if assistant.Role != "assistant" || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Name != "echo" {
 		t.Fatalf("expected assistant tool-request for %q, got %+v", "echo", assistant)
+	}
+}
+
+func TestConverseUnknownToolDoesNotPanic(t *testing.T) {
+	model := &FakeModel{steps: []Step{
+		callStep("ghost", "{}"),
+		{Done: true, Text: "ok"},
+	}}
+
+	history, _, err := Converse(context.Background(), model, nil, []Message{{Role: "user", Text: "oi"}}, Hooks{})
+	if err != nil {
+		t.Fatalf("Converse: %v", err)
+	}
+
+	// O resultado da tool fantasma deve voltar como erro para o modelo.
+	second := model.seen[1]
+	last := second[len(second)-1]
+	if last.Role != "tool" || last.Text == "" {
+		t.Fatalf("expected tool error result, got %+v", last)
+	}
+	_ = history
+}
+
+func TestConverseRunsParallelToolsInOrder(t *testing.T) {
+	tools := []Tool{
+		okTool("a", func(string) string { return "ra" }),
+		okTool("b", func(string) string { return "rb" }),
+	}
+	model := &FakeModel{steps: []Step{
+		{ToolCalls: []ToolCall{
+			{ID: "0", Name: "a", Input: "{}"},
+			{ID: "1", Name: "b", Input: "{}"},
+		}},
+		{Done: true, Text: "ok"},
+	}}
+
+	Converse(context.Background(), model, tools, []Message{{Role: "user", Text: "oi"}}, Hooks{})
+
+	second := model.seen[1]
+	// Últimas duas mensagens são os resultados, na ordem original a,b.
+	ra := second[len(second)-2]
+	rb := second[len(second)-1]
+	if ra.Text != "ra" || ra.ToolID != "0" || rb.Text != "rb" || rb.ToolID != "1" {
+		t.Fatalf("parallel results out of order: %+v %+v", ra, rb)
+	}
+}
+
+func TestConverseStopsOnCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	model := &FakeModel{steps: []Step{{Done: true, Text: "nope"}}}
+
+	_, _, err := Converse(ctx, model, nil, []Message{{Role: "user", Text: "oi"}}, Hooks{})
+	if err == nil {
+		t.Fatalf("expected cancellation error")
+	}
+	if model.calls != 0 {
+		t.Fatalf("model should not be called on cancelled context, calls=%d", model.calls)
+	}
+}
+
+func TestConversePreToolCanDeny(t *testing.T) {
+	ran := false
+	tools := []Tool{okTool("danger", func(string) string { ran = true; return "did it" })}
+	model := &FakeModel{steps: []Step{
+		callStep("danger", "{}"),
+		{Done: true, Text: "ok"},
+	}}
+
+	Converse(context.Background(), model, tools, []Message{{Role: "user", Text: "oi"}}, Hooks{
+		PreTool: func(ToolCall) (bool, string) { return true, "blocked" },
+	})
+
+	if ran {
+		t.Fatalf("denied tool should not run")
+	}
+	second := model.seen[1]
+	if last := second[len(second)-1]; last.Text != "denied: blocked" {
+		t.Fatalf("expected denial result, got %q", last.Text)
 	}
 }

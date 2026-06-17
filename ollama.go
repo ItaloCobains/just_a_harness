@@ -1,10 +1,13 @@
 package harness
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -24,18 +27,19 @@ func ollamaToolDef(tool Tool) map[string]any {
 	}
 }
 
-func (m OllamaModel) Next(messages []Message, tools []Tool) Step {
+func (m OllamaModel) Next(ctx context.Context, messages []Message, tools []Tool, onDelta func(string)) (Step, error) {
 	chat := make([]map[string]any, 0, len(messages))
-
 	for _, msg := range messages {
 		entry := map[string]any{"role": msg.Role, "content": msg.Text}
-		if msg.Tool != "" {
-			entry["tool_calls"] = []map[string]any{
-				{"function": map[string]any{
-					"name":      msg.Tool,
-					"arguments": json.RawMessage(msg.Input),
-				}},
+		if len(msg.ToolCalls) > 0 {
+			calls := make([]map[string]any, 0, len(msg.ToolCalls))
+			for _, c := range msg.ToolCalls {
+				calls = append(calls, map[string]any{"function": map[string]any{
+					"name":      c.Name,
+					"arguments": json.RawMessage(c.Input),
+				}})
 			}
+			entry["tool_calls"] = calls
 		}
 		chat = append(chat, entry)
 	}
@@ -43,7 +47,7 @@ func (m OllamaModel) Next(messages []Message, tools []Tool) Step {
 	payload := map[string]any{
 		"model":    m.Model,
 		"messages": chat,
-		"stream":   false,
+		"stream":   true,
 	}
 	if len(tools) > 0 {
 		defs := make([]map[string]any, 0, len(tools))
@@ -54,54 +58,82 @@ func (m OllamaModel) Next(messages []Message, tools []Tool) Step {
 	}
 	body, _ := json.Marshal(payload)
 
-	resp, err := http.Post(m.Endpoint+"/api/chat", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.Endpoint+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return Step{Done: true, Text: "http error: " + err.Error()}
+		return Step{}, err
 	}
+	req.Header.Set("Content-Type", "application/json")
 
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Step{}, err
+	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
-	step, err := parseStep(data)
-	if err != nil {
-		return Step{Done: true, Text: "parse error: " + err.Error()}
-	}
-
-	return step
+	return parseStream(resp.Body, onDelta)
 }
 
-func parseStep(body []byte) (Step, error) {
-	var resp struct {
-		Message struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
-				Function struct {
-					Name      string          `json:"name"`
-					Arguments json.RawMessage `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"message"`
-	}
+// chatChunk is one NDJSON line of an Ollama streaming response.
+type chatChunk struct {
+	Message struct {
+		Content   string `json:"content"`
+		ToolCalls []struct {
+			Function struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls"`
+	} `json:"message"`
+	Done bool `json:"done"`
+}
 
-	if err := json.Unmarshal(body, &resp); err != nil {
+func parseStream(r io.Reader, onDelta func(string)) (Step, error) {
+	var content strings.Builder
+	var calls []ToolCall
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var chunk chatChunk
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			return Step{}, err
+		}
+		if chunk.Message.Content != "" {
+			content.WriteString(chunk.Message.Content)
+			if onDelta != nil {
+				onDelta(chunk.Message.Content)
+			}
+		}
+		for _, tc := range chunk.Message.ToolCalls {
+			calls = append(calls, ToolCall{
+				ID:    "call_" + strconv.Itoa(len(calls)),
+				Name:  tc.Function.Name,
+				Input: string(tc.Function.Arguments),
+			})
+		}
+	}
+	if err := scanner.Err(); err != nil {
 		return Step{}, err
 	}
 
-	if len(resp.Message.ToolCalls) > 0 {
-		call := resp.Message.ToolCalls[0].Function
-		return Step{Tool: call.Name, Input: string(call.Arguments)}, nil
+	if len(calls) > 0 {
+		return Step{ToolCalls: calls}, nil
 	}
 
 	// Alguns modelos (qwen2.5-coder) emitem a chamada como texto no content
 	// em vez de usar o canal nativo. Tolera esse formato.
-	if call, ok := toolCallFromText(resp.Message.Content); ok {
-		return call, nil
+	if call, ok := toolCallFromText(content.String()); ok {
+		return Step{ToolCalls: []ToolCall{call}}, nil
 	}
 
-	return Step{Done: true, Text: resp.Message.Content}, nil
+	return Step{Done: true, Text: content.String()}, nil
 }
 
-func toolCallFromText(content string) (Step, bool) {
+func toolCallFromText(content string) (ToolCall, bool) {
 	for _, candidate := range jsonCandidates(content) {
 		var call struct {
 			Name      string          `json:"name"`
@@ -111,10 +143,10 @@ func toolCallFromText(content string) (Step, bool) {
 			continue
 		}
 		if call.Name != "" && len(call.Arguments) > 0 {
-			return Step{Tool: call.Name, Input: string(call.Arguments)}, true
+			return ToolCall{ID: "call_0", Name: call.Name, Input: string(call.Arguments)}, true
 		}
 	}
-	return Step{}, false
+	return ToolCall{}, false
 }
 
 // jsonCandidates returns the trimmed content plus the inner text of every
