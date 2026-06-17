@@ -15,6 +15,24 @@ func TestParseStepPlainAnswer(t *testing.T) {
 	}
 }
 
+func TestOllamaToolDefFromTool(t *testing.T) {
+	tool := Tool{
+		Name:        "read_file",
+		Description: "Read a file",
+		Schema:      map[string]any{"type": "object"},
+	}
+
+	def := ollamaToolDef(tool)
+
+	fn := def["function"].(map[string]any)
+	if fn["name"] != "read_file" {
+		t.Fatalf("name = %v, want %q", fn["name"], "read_file")
+	}
+	if fn["description"] != "Read a file" {
+		t.Fatalf("description = %v, want %q", fn["description"], "Read a file")
+	}
+}
+
 func TestParseStepToolCall(t *testing.T) {
 	body := []byte(`{"message":{"role":"assistant","tool_calls":[{"function":{"name":"add","arguments":{"a":2,"b":2}}}]}}`)
 

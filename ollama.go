@@ -10,10 +10,20 @@ import (
 type OllamaModel struct {
 	Model    string
 	Endpoint string
-	Tools    []map[string]any
 }
 
-func (m OllamaModel) Next(messages []Message) Step {
+func ollamaToolDef(tool Tool) map[string]any {
+	return map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"parameters":  tool.Schema,
+		},
+	}
+}
+
+func (m OllamaModel) Next(messages []Message, tools []Tool) Step {
 	chat := make([]map[string]any, 0, len(messages))
 
 	for _, msg := range messages {
@@ -34,8 +44,12 @@ func (m OllamaModel) Next(messages []Message) Step {
 		"messages": chat,
 		"stream":   false,
 	}
-	if len(m.Tools) > 0 {
-		payload["tools"] = m.Tools
+	if len(tools) > 0 {
+		defs := make([]map[string]any, 0, len(tools))
+		for _, tool := range tools {
+			defs = append(defs, ollamaToolDef(tool))
+		}
+		payload["tools"] = defs
 	}
 	body, _ := json.Marshal(payload)
 

@@ -10,9 +10,9 @@ type FakeModel struct {
 	seen  [][]Message
 }
 
-func (endlessModel) Next(_ []Message) Step { return Step{} }
+func (endlessModel) Next(_ []Message, _ []Tool) Step { return Step{} }
 
-func (m *FakeModel) Next(msgs []Message) Step {
+func (m *FakeModel) Next(msgs []Message, _ []Tool) Step {
 	m.seen = append(m.seen, msgs)
 	step := m.steps[m.calls]
 	m.calls++
@@ -44,12 +44,13 @@ func TestRunLoopsUntilModelStops(t *testing.T) {
 
 func TestRunExecutesRequestedTool(t *testing.T) {
 	var gotInput string
-	tools := map[string]Tool{
-		"echo": func(input string) string {
+	tools := []Tool{{
+		Name: "echo",
+		Func: func(input string) string {
 			gotInput = input
 			return input
 		},
-	}
+	}}
 
 	model := &FakeModel{steps: []Step{
 		{Tool: "echo", Input: "hi"},
@@ -64,9 +65,10 @@ func TestRunExecutesRequestedTool(t *testing.T) {
 }
 
 func TestRunFeedsToolResultBackToModel(t *testing.T) {
-	tools := map[string]Tool{
-		"echo": func(input string) string { return input },
-	}
+	tools := []Tool{{
+		Name: "echo",
+		Func: func(input string) string { return input },
+	}}
 	model := &FakeModel{steps: []Step{
 		{Tool: "echo", Input: "hi"},
 		{Done: true, Text: "ok"},
@@ -107,9 +109,10 @@ func TestRunTagsUserInputWithUserRole(t *testing.T) {
 }
 
 func TestRunTagsToolResultWithToolRole(t *testing.T) {
-	tools := map[string]Tool{
-		"echo": func(input string) string { return input },
-	}
+	tools := []Tool{{
+		Name: "echo",
+		Func: func(input string) string { return input },
+	}}
 	model := &FakeModel{steps: []Step{
 		{Tool: "echo", Input: "hi"},
 		{Done: true, Text: "ok"},
@@ -125,9 +128,10 @@ func TestRunTagsToolResultWithToolRole(t *testing.T) {
 }
 
 func TestRunRecordsAssistantToolRequest(t *testing.T) {
-	tools := map[string]Tool{
-		"echo": func(input string) string { return input },
-	}
+	tools := []Tool{{
+		Name: "echo",
+		Func: func(input string) string { return input },
+	}}
 	model := &FakeModel{steps: []Step{
 		{Tool: "echo", Input: "hi"},
 		{Done: true, Text: "ok"},
