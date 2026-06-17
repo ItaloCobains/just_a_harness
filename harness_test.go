@@ -22,3 +22,16 @@ func TestRunReturnsFinalTextWhenModelStops(t *testing.T) {
 		t.Fatalf("Run = %q, want %q", got, "olá")
 	}
 }
+
+func TestRunLoopsUntilModelStops(t *testing.T) {
+	model := &FakeModel{steps: []Step{
+		{Done: false, Text: "pensando"},
+		{Done: true, Text: "pronto"},
+	}}
+
+	got := Run(model, "oi")
+
+	if got != "pronto" {
+		t.Fatalf("Run = %q, want %q", got, "pronto")
+	}
+}

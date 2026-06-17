@@ -8,6 +8,11 @@ type Step struct {
 }
 
 func Run(model *FakeModel, input string) string {
-	step := model.Next(nil)
-	return step.Text
+	for {
+		step := model.Next(nil)
+
+		if step.Done {
+			return step.Text
+		}
+	}
 }
