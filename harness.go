@@ -1,10 +1,14 @@
 package harness
 
+import "errors"
+
+const maxTurns = 10
+
+var ErrMaxTurns = errors.New("harness: max turns exceeded")
+
 type Message struct {
 	Text string
 }
-
-type Tool func(input string) string
 
 type Step struct {
 	Done  bool
@@ -13,10 +17,16 @@ type Step struct {
 	Input string
 }
 
-func Run(model *FakeModel, tools map[string]Tool, input string) string {
+type Tool func(input string) string
+
+type Model interface {
+	Next(messages []Message) Step
+}
+
+func Run(model Model, tools map[string]Tool, input string) (string, error) {
 	history := []Message{{Text: input}}
 
-	for {
+	for turn := 0; turn < maxTurns; turn++ {
 		step := model.Next(history)
 
 		if step.Tool != "" {
@@ -26,7 +36,9 @@ func Run(model *FakeModel, tools map[string]Tool, input string) string {
 		}
 
 		if step.Done {
-			return step.Text
+			return step.Text, nil
 		}
 	}
+
+	return "", ErrMaxTurns
 }

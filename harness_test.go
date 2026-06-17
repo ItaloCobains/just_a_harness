@@ -2,11 +2,15 @@ package harness
 
 import "testing"
 
+type endlessModel struct{}
+
 type FakeModel struct {
 	steps []Step
 	calls int
 	seen  [][]Message
 }
+
+func (endlessModel) Next(_ []Message) Step { return Step{} }
 
 func (m *FakeModel) Next(msgs []Message) Step {
 	m.seen = append(m.seen, msgs)
@@ -18,7 +22,7 @@ func (m *FakeModel) Next(msgs []Message) Step {
 func TestRunReturnsFinalTextWhenModelStops(t *testing.T) {
 	model := &FakeModel{steps: []Step{{Done: true, Text: "olá"}}}
 
-	got := Run(model, nil, "oi")
+	got, _ := Run(model, nil, "oi")
 
 	if got != "olá" {
 		t.Fatalf("Run = %q, want %q", got, "olá")
@@ -31,7 +35,7 @@ func TestRunLoopsUntilModelStops(t *testing.T) {
 		{Done: true, Text: "pronto"},
 	}}
 
-	got := Run(model, nil, "oi")
+	got, _ := Run(model, nil, "oi")
 
 	if got != "pronto" {
 		t.Fatalf("Run = %q, want %q", got, "pronto")
@@ -80,5 +84,13 @@ func TestRunFeedsToolResultBackToModel(t *testing.T) {
 
 	if !found {
 		t.Fatalf("model did not see tool result %q on secound turn, saw %v", "hi", secondTurn)
+	}
+}
+
+func TestRunStopsAfterMaxTurns(t *testing.T) {
+	_, err := Run(endlessModel{}, nil, "oi")
+
+	if err == nil {
+		t.Fatalf("Run should return an error when the model never stops")
 	}
 }
