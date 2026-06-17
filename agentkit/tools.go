@@ -22,6 +22,9 @@ To use a tool, reply with ONLY a single JSON object and nothing else:
 {"name": "<tool>", "arguments": { ... }}
 
 Do not describe the call in prose. Do not wrap it in code fences. Emit only the JSON.
+Use a tool ONLY when the user's request requires reading, searching, or changing files.
+For greetings, small talk, or questions you can answer from this conversation, reply in
+plain text and do not call any tool. Never edit files unless the user explicitly asks for it.
 After a tool result comes back, decide the next tool call or give your final answer.
 Inspect files before changing them. Prefer edit_file over write_file for existing files.
 Use grep and glob to search instead of shelling out. Delegate broad searches to task.
