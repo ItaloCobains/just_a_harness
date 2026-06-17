@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type OllamaModel struct {
@@ -91,5 +92,55 @@ func parseStep(body []byte) (Step, error) {
 		return Step{Tool: call.Name, Input: string(call.Arguments)}, nil
 	}
 
+	// Alguns modelos (qwen2.5-coder) emitem a chamada como texto no content
+	// em vez de usar o canal nativo. Tolera esse formato.
+	if call, ok := toolCallFromText(resp.Message.Content); ok {
+		return call, nil
+	}
+
 	return Step{Done: true, Text: resp.Message.Content}, nil
+}
+
+func toolCallFromText(content string) (Step, bool) {
+	for _, candidate := range jsonCandidates(content) {
+		var call struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal([]byte(candidate), &call); err != nil {
+			continue
+		}
+		if call.Name != "" && len(call.Arguments) > 0 {
+			return Step{Tool: call.Name, Input: string(call.Arguments)}, true
+		}
+	}
+	return Step{}, false
+}
+
+// jsonCandidates returns the trimmed content plus the inner text of every
+// fenced ```...``` block, so an embedded tool call can be recovered from prose.
+func jsonCandidates(content string) []string {
+	content = strings.TrimSpace(content)
+	candidates := []string{content}
+
+	rest := content
+	for {
+		start := strings.Index(rest, "```")
+		if start == -1 {
+			break
+		}
+		rest = rest[start+3:]
+		if i := strings.IndexByte(rest, '\n'); i != -1 {
+			if tag := strings.TrimSpace(rest[:i]); tag == "json" || tag == "" {
+				rest = rest[i+1:]
+			}
+		}
+		end := strings.Index(rest, "```")
+		if end == -1 {
+			break
+		}
+		candidates = append(candidates, strings.TrimSpace(rest[:end]))
+		rest = rest[end+3:]
+	}
+	return candidates
 }

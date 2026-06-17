@@ -2,7 +2,7 @@ package harness
 
 import "errors"
 
-const maxTurns = 10
+const maxTurns = 25
 
 var ErrMaxTurns = errors.New("harness: max turns exceeded")
 
@@ -31,13 +31,17 @@ type Model interface {
 	Next(messages []Message, tools []Tool) Step
 }
 
-func Run(model Model, tools []Tool, input string) (string, error) {
+func Run(model Model, tools []Tool, system, input string) (string, error) {
 	byName := make(map[string]Tool, len(tools))
 	for _, tool := range tools {
 		byName[tool.Name] = tool
 	}
 
-	history := []Message{{Role: "user", Text: input}}
+	var history []Message
+	if system != "" {
+		history = append(history, Message{Role: "system", Text: system})
+	}
+	history = append(history, Message{Role: "user", Text: input})
 
 	for range maxTurns {
 		step := model.Next(history, tools)

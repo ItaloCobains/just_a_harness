@@ -1,55 +1,37 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
+	"strings"
 
 	"harness"
 )
 
-func toInt(v any) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case string:
-		i, _ := strconv.Atoi(n)
-		return i
-	}
-	return 0
-}
+const systemPrompt = `You are a coding assistant working in the current directory.
+You have tools: read_file, list_dir, write_file, run_bash.
+
+To use a tool, reply with ONLY a single JSON object and nothing else:
+{"name": "<tool>", "arguments": { ... }}
+
+Do not describe the call in prose. Do not wrap it in code fences. Emit only the JSON.
+After a tool result comes back, decide the next tool call or give your final answer.
+Inspect files before changing them. Make the smallest change that satisfies the request.
+Only when the task is fully complete, reply with a plain-text summary (no JSON).`
 
 func main() {
-	tools := []harness.Tool{
-		{
-			Name:        "add",
-			Description: "Add two integers and return their sum",
-			Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"a": map[string]any{"type": "integer"},
-					"b": map[string]any{"type": "integer"},
-				},
-				"required": []string{"a", "b"},
-			},
-			Func: func(input string) string {
-				fmt.Fprintf(os.Stderr, "[tool add called] input=%s\n", input)
-				var args map[string]any
-				if err := json.Unmarshal([]byte(input), &args); err != nil {
-					return "error: " + err.Error()
-				}
-				return fmt.Sprintf("%d", toInt(args["a"])+toInt(args["b"]))
-			},
-		},
+	task := strings.Join(os.Args[1:], " ")
+	if task == "" {
+		task = "List the files in the current directory and tell me what this project does."
 	}
 
-	model := harness.OllamaModel{Model: "llama3.2:3b", Endpoint: "http://localhost:11434"}
+	model := harness.OllamaModel{Model: "qwen2.5-coder:7b", Endpoint: "http://localhost:11434"}
 
-	answer, err := harness.Run(model, tools, "Use the add tool to compute 48211 + 91347. Report exactly what the tool returns.")
+	answer, err := harness.Run(model, codingTools(), systemPrompt, task)
 	if err != nil {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Println("answer:", answer)
+	fmt.Println("\n=== answer ===")
+	fmt.Println(answer)
 }

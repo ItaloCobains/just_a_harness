@@ -22,7 +22,7 @@ func (m *FakeModel) Next(msgs []Message, _ []Tool) Step {
 func TestRunReturnsFinalTextWhenModelStops(t *testing.T) {
 	model := &FakeModel{steps: []Step{{Done: true, Text: "olá"}}}
 
-	got, _ := Run(model, nil, "oi")
+	got, _ := Run(model, nil, "", "oi")
 
 	if got != "olá" {
 		t.Fatalf("Run = %q, want %q", got, "olá")
@@ -35,7 +35,7 @@ func TestRunLoopsUntilModelStops(t *testing.T) {
 		{Done: true, Text: "pronto"},
 	}}
 
-	got, _ := Run(model, nil, "oi")
+	got, _ := Run(model, nil, "", "oi")
 
 	if got != "pronto" {
 		t.Fatalf("Run = %q, want %q", got, "pronto")
@@ -57,7 +57,7 @@ func TestRunExecutesRequestedTool(t *testing.T) {
 		{Done: true, Text: "ok"},
 	}}
 
-	Run(model, tools, "oi")
+	Run(model, tools, "", "oi")
 
 	if gotInput != "hi" {
 		t.Fatalf("tool received %q, want %q", gotInput, "hi")
@@ -74,7 +74,7 @@ func TestRunFeedsToolResultBackToModel(t *testing.T) {
 		{Done: true, Text: "ok"},
 	}}
 
-	Run(model, tools, "oi")
+	Run(model, tools, "", "oi")
 
 	secondTurn := model.seen[1]
 	found := false
@@ -90,7 +90,7 @@ func TestRunFeedsToolResultBackToModel(t *testing.T) {
 }
 
 func TestRunStopsAfterMaxTurns(t *testing.T) {
-	_, err := Run(endlessModel{}, nil, "oi")
+	_, err := Run(endlessModel{}, nil, "", "oi")
 
 	if err == nil {
 		t.Fatalf("Run should return an error when the model never stops")
@@ -100,7 +100,7 @@ func TestRunStopsAfterMaxTurns(t *testing.T) {
 func TestRunTagsUserInputWithUserRole(t *testing.T) {
 	model := &FakeModel{steps: []Step{{Done: true, Text: "ok"}}}
 
-	Run(model, nil, "oi")
+	Run(model, nil, "", "oi")
 
 	first := model.seen[0][0]
 	if first.Role != "user" {
@@ -118,7 +118,7 @@ func TestRunTagsToolResultWithToolRole(t *testing.T) {
 		{Done: true, Text: "ok"},
 	}}
 
-	Run(model, tools, "oi")
+	Run(model, tools, "", "oi")
 
 	secondTurn := model.seen[1]
 	last := secondTurn[len(secondTurn)-1]
@@ -137,7 +137,7 @@ func TestRunRecordsAssistantToolRequest(t *testing.T) {
 		{Done: true, Text: "ok"},
 	}}
 
-	Run(model, tools, "oi")
+	Run(model, tools, "", "oi")
 
 	// Esperado na segunda volta: [user "oi", assistant pede echo, tool "hi"]
 	secondTurn := model.seen[1]
