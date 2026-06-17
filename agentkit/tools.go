@@ -1,4 +1,4 @@
-package main
+package agentkit
 
 import (
 	"encoding/json"
@@ -10,6 +10,17 @@ import (
 	"harness"
 )
 
+const SystemPrompt = `You are a coding assistant working in the current directory.
+You have tools: read_file, list_dir, write_file, run_bash.
+
+To use a tool, reply with ONLY a single JSON object and nothing else:
+{"name": "<tool>", "arguments": { ... }}
+
+Do not describe the call in prose. Do not wrap it in code fences. Emit only the JSON.
+After a tool result comes back, decide the next tool call or give your final answer.
+Inspect files before changing them. Make the smallest change that satisfies the request.
+Only when the task is fully complete, reply with a plain-text summary (no JSON).`
+
 func arg(input, key string) string {
 	var m map[string]any
 	json.Unmarshal([]byte(input), &m)
@@ -19,18 +30,14 @@ func arg(input, key string) string {
 	return ""
 }
 
-func logCall(name, input string) {
-	fmt.Fprintf(os.Stderr, "[%s] %s\n", name, input)
-}
-
-func codingTools() []harness.Tool {
+// CodingTools returns the file-system and shell tools for a coding agent.
+func CodingTools() []harness.Tool {
 	return []harness.Tool{
 		{
 			Name:        "read_file",
 			Description: "Read the full contents of a file at the given path.",
 			Schema:      objectSchema("path", "the file path to read"),
 			Func: func(input string) string {
-				logCall("read_file", input)
 				data, err := os.ReadFile(arg(input, "path"))
 				if err != nil {
 					return "error: " + err.Error()
@@ -43,7 +50,6 @@ func codingTools() []harness.Tool {
 			Description: "List the entries (files and directories) in a directory.",
 			Schema:      objectSchema("path", "the directory path to list"),
 			Func: func(input string) string {
-				logCall("list_dir", input)
 				entries, err := os.ReadDir(arg(input, "path"))
 				if err != nil {
 					return "error: " + err.Error()
@@ -71,7 +77,6 @@ func codingTools() []harness.Tool {
 				"required": []string{"path", "content"},
 			},
 			Func: func(input string) string {
-				logCall("write_file", input)
 				path := arg(input, "path")
 				if err := os.WriteFile(path, []byte(arg(input, "content")), 0o644); err != nil {
 					return "error: " + err.Error()
@@ -84,7 +89,6 @@ func codingTools() []harness.Tool {
 			Description: "Run a bash command in the working directory and return its combined output.",
 			Schema:      objectSchema("cmd", "the bash command to run"),
 			Func: func(input string) string {
-				logCall("run_bash", input)
 				out, err := exec.Command("bash", "-c", arg(input, "cmd")).CombinedOutput()
 				if err != nil {
 					return fmt.Sprintf("exit error: %v\n%s", err, out)

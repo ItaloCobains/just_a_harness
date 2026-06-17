@@ -19,6 +19,40 @@ func (m *FakeModel) Next(msgs []Message, _ []Tool) Step {
 	return step
 }
 
+func TestConverseAppendsFinalAnswerToHistory(t *testing.T) {
+	model := &FakeModel{steps: []Step{{Done: true, Text: "hi"}}}
+
+	history, answer, err := Converse(model, nil, []Message{{Role: "user", Text: "oi"}}, nil)
+
+	if err != nil {
+		t.Fatalf("Converse: %v", err)
+	}
+	if answer != "hi" {
+		t.Fatalf("answer = %q, want %q", answer, "hi")
+	}
+	last := history[len(history)-1]
+	if last.Role != "assistant" || last.Text != "hi" {
+		t.Fatalf("last message = %+v, want assistant %q", last, "hi")
+	}
+}
+
+func TestConverseObservesToolCalls(t *testing.T) {
+	tools := []Tool{{Name: "echo", Func: func(input string) string { return input }}}
+	model := &FakeModel{steps: []Step{
+		{Tool: "echo", Input: "x"},
+		{Done: true, Text: "ok"},
+	}}
+
+	var events []Event
+	Converse(model, tools, []Message{{Role: "user", Text: "oi"}}, func(e Event) {
+		events = append(events, e)
+	})
+
+	if len(events) != 1 || events[0].Tool != "echo" || events[0].Result != "x" {
+		t.Fatalf("events = %+v, want one echo call returning %q", events, "x")
+	}
+}
+
 func TestRunReturnsFinalTextWhenModelStops(t *testing.T) {
 	model := &FakeModel{steps: []Step{{Done: true, Text: "olá"}}}
 
