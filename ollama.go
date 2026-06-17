@@ -10,20 +10,34 @@ import (
 type OllamaModel struct {
 	Model    string
 	Endpoint string
+	Tools    []map[string]any
 }
 
 func (m OllamaModel) Next(messages []Message) Step {
 	chat := make([]map[string]any, 0, len(messages))
 
 	for _, msg := range messages {
-		chat = append(chat, map[string]any{"role": msg.Role, "content": msg.Text})
+		entry := map[string]any{"role": msg.Role, "content": msg.Text}
+		if msg.Tool != "" {
+			entry["tool_calls"] = []map[string]any{
+				{"function": map[string]any{
+					"name":      msg.Tool,
+					"arguments": json.RawMessage(msg.Input),
+				}},
+			}
+		}
+		chat = append(chat, entry)
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":    m.Model,
 		"messages": chat,
 		"stream":   false,
-	})
+	}
+	if len(m.Tools) > 0 {
+		payload["tools"] = m.Tools
+	}
+	body, _ := json.Marshal(payload)
 
 	resp, err := http.Post(m.Endpoint+"/api/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -44,12 +58,23 @@ func (m OllamaModel) Next(messages []Message) Step {
 func parseStep(body []byte) (Step, error) {
 	var resp struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"message"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return Step{}, err
+	}
+
+	if len(resp.Message.ToolCalls) > 0 {
+		call := resp.Message.ToolCalls[0].Function
+		return Step{Tool: call.Name, Input: string(call.Arguments)}, nil
 	}
 
 	return Step{Done: true, Text: resp.Message.Content}, nil
