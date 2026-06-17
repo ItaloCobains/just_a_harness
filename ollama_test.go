@@ -71,6 +71,19 @@ func TestParseStepToolCallInFencedContent(t *testing.T) {
 	}
 }
 
+func TestParseStepToolCallInBashFence(t *testing.T) {
+	// qwen2.5-coder narra passos com fences ```bash em vez de emitir só JSON.
+	body := "{\"message\":{\"role\":\"assistant\",\"content\":\"Vamos começar:\\n```bash\\n{\\\"name\\\":\\\"run_bash\\\",\\\"arguments\\\":{\\\"cmd\\\":\\\"gem install rails\\\"}}\\n```\"},\"done\":true}"
+
+	call := firstCall(t, parse(t, body))
+	if call.Name != "run_bash" {
+		t.Fatalf("Name = %q, want %q", call.Name, "run_bash")
+	}
+	if call.Input != `{"cmd":"gem install rails"}` {
+		t.Fatalf("Input = %q", call.Input)
+	}
+}
+
 func TestParseStepPlainAnswerNotMistakenForToolCall(t *testing.T) {
 	step := parse(t, `{"message":{"role":"assistant","content":"The module is named harness."},"done":true}`)
 

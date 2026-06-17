@@ -162,8 +162,11 @@ func jsonCandidates(content string) []string {
 			break
 		}
 		rest = rest[start+3:]
+		// Drop the fence's language line (```json, ```bash, ```ruby, ...) so the
+		// JSON body underneath is left as the candidate. A line that already starts
+		// with '{' is the body itself, not a tag.
 		if i := strings.IndexByte(rest, '\n'); i != -1 {
-			if tag := strings.TrimSpace(rest[:i]); tag == "json" || tag == "" {
+			if tag := strings.TrimSpace(rest[:i]); !strings.HasPrefix(tag, "{") {
 				rest = rest[i+1:]
 			}
 		}
