@@ -94,3 +94,51 @@ func TestRunStopsAfterMaxTurns(t *testing.T) {
 		t.Fatalf("Run should return an error when the model never stops")
 	}
 }
+
+func TestRunTagsUserInputWithUserRole(t *testing.T) {
+	model := &FakeModel{steps: []Step{{Done: true, Text: "ok"}}}
+
+	Run(model, nil, "oi")
+
+	first := model.seen[0][0]
+	if first.Role != "user" {
+		t.Fatalf("first message role = %q, want %q", first.Role, "user")
+	}
+}
+
+func TestRunTagsToolResultWithToolRole(t *testing.T) {
+	tools := map[string]Tool{
+		"echo": func(input string) string { return input },
+	}
+	model := &FakeModel{steps: []Step{
+		{Tool: "echo", Input: "hi"},
+		{Done: true, Text: "ok"},
+	}}
+
+	Run(model, tools, "oi")
+
+	secondTurn := model.seen[1]
+	last := secondTurn[len(secondTurn)-1]
+	if last.Role != "tool" {
+		t.Fatalf("tool result role = %q, want %q", last.Role, "tool")
+	}
+}
+
+func TestRunRecordsAssistantToolRequest(t *testing.T) {
+	tools := map[string]Tool{
+		"echo": func(input string) string { return input },
+	}
+	model := &FakeModel{steps: []Step{
+		{Tool: "echo", Input: "hi"},
+		{Done: true, Text: "ok"},
+	}}
+
+	Run(model, tools, "oi")
+
+	// Esperado na segunda volta: [user "oi", assistant pede echo, tool "hi"]
+	secondTurn := model.seen[1]
+	assistant := secondTurn[len(secondTurn)-2]
+	if assistant.Role != "assistant" || assistant.Tool != "echo" {
+		t.Fatalf("expected assistant tool-request for %q, got %+v", "echo", assistant)
+	}
+}

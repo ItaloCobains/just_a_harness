@@ -7,7 +7,10 @@ const maxTurns = 10
 var ErrMaxTurns = errors.New("harness: max turns exceeded")
 
 type Message struct {
-	Text string
+	Role  string
+	Text  string
+	Tool  string
+	Input string
 }
 
 type Step struct {
@@ -24,14 +27,15 @@ type Model interface {
 }
 
 func Run(model Model, tools map[string]Tool, input string) (string, error) {
-	history := []Message{{Text: input}}
+	history := []Message{{Role: "user", Text: input}}
 
-	for turn := 0; turn < maxTurns; turn++ {
+	for range maxTurns {
 		step := model.Next(history)
 
 		if step.Tool != "" {
+			history = append(history, Message{Role: "assistant", Tool: step.Tool, Input: step.Input})
 			result := tools[step.Tool](step.Input)
-			history = append(history, Message{Text: result})
+			history = append(history, Message{Role: "tool", Text: result})
 			continue
 		}
 
