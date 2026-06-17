@@ -14,15 +14,23 @@ func sized() model {
 	return m.(model)
 }
 
-func TestChatRendersAgentAnswer(t *testing.T) {
-	next, _ := sized().Update(doneMsg{answer: "hello world"})
+func TestChatStreamsAgentAnswer(t *testing.T) {
+	next, _ := sized().Update(deltaMsg("hello "))
+	next, _ = next.(model).Update(deltaMsg("world"))
 	m := next.(model)
 
-	if m.thinking {
-		t.Fatal("thinking must be false after doneMsg")
-	}
 	if !strings.Contains(m.render(), "hello world") {
-		t.Fatalf("transcript missing answer, got:\n%s", m.render())
+		t.Fatalf("transcript missing streamed answer, got:\n%s", m.render())
+	}
+}
+
+func TestChatDoneClearsThinking(t *testing.T) {
+	m := sized()
+	m.thinking = true
+	next, _ := m.Update(doneMsg{answer: "done"})
+
+	if next.(model).thinking {
+		t.Fatal("thinking must be false after doneMsg")
 	}
 }
 

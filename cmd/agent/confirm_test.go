@@ -1,19 +1,26 @@
 package main
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
 
 	"harness"
+	"harness/agentkit"
 )
+
+func okTool(name string, run *bool) harness.Tool {
+	return harness.Tool{Name: name, Func: func(_ context.Context, _ string) (string, error) {
+		*run = true
+		return "ok", nil
+	}}
+}
 
 func TestRequireApprovalRunsToolOnYes(t *testing.T) {
 	ran := false
-	tool := harness.Tool{Name: "write_file", Func: func(string) string { ran = true; return "ok" }}
-
-	gated := requireApproval(tool, strings.NewReader("y\n"), io.Discard)
-	gated.Func("{}")
+	gated := requireApproval(okTool("write_file", &ran), &agentkit.Approver{}, strings.NewReader("y\n"), io.Discard)
+	gated.Func(context.Background(), "{}")
 
 	if !ran {
 		t.Fatal("tool should run when the user approves")
@@ -22,9 +29,8 @@ func TestRequireApprovalRunsToolOnYes(t *testing.T) {
 
 func TestRequireApprovalSkipsToolOnNo(t *testing.T) {
 	ran := false
-	tool := harness.Tool{Name: "write_file", Func: func(string) string { ran = true; return "ok" }}
-
-	out := requireApproval(tool, strings.NewReader("n\n"), io.Discard).Func("{}")
+	gated := requireApproval(okTool("write_file", &ran), &agentkit.Approver{}, strings.NewReader("n\n"), io.Discard)
+	out, _ := gated.Func(context.Background(), "{}")
 
 	if ran {
 		t.Fatal("tool must not run when the user denies")
