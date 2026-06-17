@@ -1,6 +1,8 @@
 package harness
 
-type Message struct{}
+type Message struct {
+	Text string
+}
 
 type Tool func(input string) string
 
@@ -12,11 +14,14 @@ type Step struct {
 }
 
 func Run(model *FakeModel, tools map[string]Tool, input string) string {
+	history := []Message{{Text: input}}
+
 	for {
-		step := model.Next(nil)
+		step := model.Next(history)
 
 		if step.Tool != "" {
-			tools[step.Tool](step.Input)
+			result := tools[step.Tool](step.Input)
+			history = append(history, Message{Text: result})
 			continue
 		}
 
