@@ -6,23 +6,95 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"harness/agent"
 )
 
+const defaultBackoffBase = 200 * time.Millisecond
+
 // Model talks to an Ollama server's /api/chat endpoint.
 type Model struct {
-	Model    string
-	Endpoint string
+	Model       string
+	Endpoint    string
+	HTTPClient  *http.Client
+	MaxRetries  int
+	BackoffBase time.Duration
 }
 
-// New builds a Model for the given model name and endpoint.
+// New builds a Model for the given model name and endpoint with built-in
+// network-resilience defaults.
 func New(model, endpoint string) Model {
-	return Model{Model: model, Endpoint: endpoint}
+	return Model{
+		Model:       model,
+		Endpoint:    endpoint,
+		HTTPClient:  &http.Client{Timeout: 30 * time.Second},
+		MaxRetries:  3,
+		BackoffBase: defaultBackoffBase,
+	}
+}
+
+func (m Model) client() *http.Client {
+	if m.HTTPClient != nil {
+		return m.HTTPClient
+	}
+	return http.DefaultClient
+}
+
+func (m Model) backoffBase() time.Duration {
+	if m.BackoffBase > 0 {
+		return m.BackoffBase
+	}
+	return defaultBackoffBase
+}
+
+// doRequest POSTs body to /api/chat, retrying transient failures (transport
+// errors and 5xx responses) with exponential backoff. Context cancellation and
+// 4xx responses abort immediately without a retry. The final failure is wrapped
+// with agent.ErrUpstreamUnavailable.
+func (m Model) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= m.MaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := m.backoffBase() << (attempt - 1)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.Endpoint+"/api/chat", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := m.client().Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("ollama: status %d", resp.StatusCode)
+		}
+		return resp, nil
+	}
+	return nil, fmt.Errorf("%w: %v", agent.ErrUpstreamUnavailable, lastErr)
 }
 
 func ollamaToolDef(tool agent.Tool) map[string]any {
@@ -65,15 +137,12 @@ func (m Model) Next(ctx context.Context, messages []agent.Message, tools []agent
 		}
 		payload["tools"] = defs
 	}
-	body, _ := json.Marshal(payload)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.Endpoint+"/api/chat", bytes.NewReader(body))
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return agent.Step{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := m.doRequest(ctx, body)
 	if err != nil {
 		return agent.Step{}, err
 	}

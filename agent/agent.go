@@ -8,7 +8,10 @@ import (
 
 const maxTurns = 25
 
-var ErrMaxTurns = errors.New("harness: max turns exceeded")
+var (
+	ErrMaxTurns            = errors.New("harness: max turns exceeded")
+	ErrUpstreamUnavailable = errors.New("harness: upstream unavailable after retries")
+)
 
 // ToolCall is a single request from the model to run a tool.
 type ToolCall struct {
