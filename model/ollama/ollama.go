@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,20 @@ import (
 )
 
 const defaultBackoffBase = 200 * time.Millisecond
+
+// StreamingClient builds an HTTP client suited to a streaming chat endpoint.
+// connectTimeout bounds dialing and the wait for response headers (so a dead or
+// unresponsive server still fails fast), but the client has NO total timeout:
+// a long generation must not be killed mid-stream while tokens are flowing.
+// Callers cancel via the request context (e.g. Ctrl+C) instead.
+func StreamingClient(connectTimeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
+			ResponseHeaderTimeout: connectTimeout,
+		},
+	}
+}
 
 // Model talks to an Ollama server's /api/chat endpoint.
 type Model struct {
@@ -33,7 +48,7 @@ func New(model, endpoint string) Model {
 	return Model{
 		Model:       model,
 		Endpoint:    endpoint,
-		HTTPClient:  &http.Client{Timeout: 30 * time.Second},
+		HTTPClient:  StreamingClient(120 * time.Second),
 		MaxRetries:  3,
 		BackoffBase: defaultBackoffBase,
 	}

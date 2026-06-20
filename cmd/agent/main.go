@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -27,7 +26,7 @@ func main() {
 
 	cfg := config.Load()
 	model := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
-	model.HTTPClient = &http.Client{Timeout: cfg.HTTPTimeout}
+	model.HTTPClient = ollama.StreamingClient(cfg.HTTPTimeout)
 	model.MaxRetries = cfg.HTTPMaxRetries
 
 	approver := agentkit.LoadApprover()

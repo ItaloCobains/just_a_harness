@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -81,7 +80,7 @@ func initialModel(resume string) model {
 
 	cfg := config.Load()
 	llm := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
-	llm.HTTPClient = &http.Client{Timeout: cfg.HTTPTimeout}
+	llm.HTTPClient = ollama.StreamingClient(cfg.HTTPTimeout)
 	llm.MaxRetries = cfg.HTTPMaxRetries
 	approver := agentkit.LoadApprover()
 	sub := make(chan tea.Msg, 64)
