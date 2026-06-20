@@ -37,9 +37,14 @@ URL to read it. Use web_fetch directly when the user gives a link.
 For greetings, small talk, or questions you can answer from this conversation, reply in
 plain text and do not call any tool. Never edit files unless the user explicitly asks for it.
 After a tool result comes back, decide the next tool call or give your final answer.
+To create a NEW file, use write_file; it creates any missing parent directories, so
+you do not need mkdir first. edit_file only modifies an EXISTING file and needs an
+old_string that appears exactly once; never call edit_file with an empty old_string.
 Inspect files before changing them. Prefer edit_file over write_file for existing files.
 Use grep and glob to search instead of shelling out. Delegate broad searches to task.
 Make the smallest change that satisfies the request.
+Never claim you created or changed a file unless a tool call returned success; if a tool
+keeps failing, say so plainly instead of pretending it worked.
 Only when the task is fully complete, reply with a plain-text summary (no JSON).`
 
 var (
@@ -99,6 +104,9 @@ func listDirTool() agent.Tool {
 			if err != nil {
 				return "", err
 			}
+			if len(entries) == 0 {
+				return "(empty directory)", nil
+			}
 			names := make([]string, 0, len(entries))
 			for _, e := range entries {
 				name := e.Name()
@@ -128,6 +136,11 @@ func writeFileTool() agent.Tool {
 			path := arg(input, "path")
 			if path == "" {
 				return "", ErrMissingArg
+			}
+			if dir := filepath.Dir(path); dir != "" && dir != "." {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return "", err
+				}
 			}
 			if err := os.WriteFile(path, []byte(arg(input, "content")), 0o644); err != nil {
 				return "", err
