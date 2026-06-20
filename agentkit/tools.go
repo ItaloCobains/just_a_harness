@@ -186,10 +186,18 @@ func runBashTool() agent.Tool {
 		Schema:      objectSchema("cmd", "the bash command to run"),
 		Func: func(ctx context.Context, input string) (string, error) {
 			out, err := exec.CommandContext(ctx, "bash", "-c", arg(input, "cmd")).CombinedOutput()
+			// Treat a non-zero exit as data, not a Go error, so the command's
+			// own output reaches the model instead of being swapped for a bare
+			// "error: exit status 1" by the agent loop.
+			status := "exit 0"
 			if err != nil {
-				return string(out), err
+				status = err.Error()
 			}
-			return string(out), nil
+			text := strings.TrimRight(string(out), "\n")
+			if text == "" {
+				return "(" + status + ", no output)", nil
+			}
+			return text + "\n(" + status + ")", nil
 		},
 	}
 }
