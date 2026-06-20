@@ -33,6 +33,20 @@ func firstCall(t *testing.T, step agent.Step) agent.ToolCall {
 	return step.ToolCalls[0]
 }
 
+func TestParseStepToolCallWithTrailingBrace(t *testing.T) {
+	// qwen2.5-coder sometimes emits a stray extra closing brace.
+	content := "```json\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"x.html\", \"content\": \"<h1>hi</h1>\"}}}\n```"
+
+	call := firstCall(t, parse(t, chatBody(content)))
+
+	if call.Name != "write_file" {
+		t.Fatalf("Name = %q, want write_file", call.Name)
+	}
+	if !strings.Contains(call.Input, "x.html") {
+		t.Fatalf("arguments lost: %q", call.Input)
+	}
+}
+
 func TestParseStepToolCallEmbeddedInProse(t *testing.T) {
 	content := "Sure, let's write it:\n\n```json\n{\"name\":\"write_file\",\"arguments\":{\"path\":\"x.md\",\"content\":\"hi\"}}\n```\nDone."
 

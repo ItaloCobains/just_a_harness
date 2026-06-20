@@ -234,7 +234,10 @@ func toolCallFromText(content string) (agent.ToolCall, bool) {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		}
-		if err := json.Unmarshal([]byte(candidate), &call); err != nil {
+		// Decode the first JSON value and ignore any trailing junk. Smaller
+		// models often emit a stray extra brace or a comment after the object,
+		// which a strict json.Unmarshal would reject outright.
+		if err := json.NewDecoder(strings.NewReader(candidate)).Decode(&call); err != nil {
 			continue
 		}
 		if call.Name != "" && len(call.Arguments) > 0 {
