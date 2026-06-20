@@ -22,23 +22,59 @@ func HandleCommand(line string, history []agent.Message, tools []agent.Tool) Com
 		return CommandResult{}
 	}
 
-	switch strings.Fields(line)[0] {
+	fields := strings.Fields(line)
+	switch fields[0] {
 	case "/help":
 		return CommandResult{Handled: true, Reply: helpText()}
 	case "/tools":
 		return CommandResult{Handled: true, Reply: toolList(tools)}
 	case "/clear":
 		return CommandResult{Handled: true, Reply: "context cleared", History: keepSystem(history)}
+	case "/resume":
+		return resumeCommand(fields[1:])
+	case "/sessions":
+		return sessionsCommand()
 	default:
 		return CommandResult{Handled: true, Reply: "unknown command. " + helpText()}
 	}
 }
 
+func resumeCommand(args []string) CommandResult {
+	var (
+		name    string
+		history []agent.Message
+		err     error
+	)
+	if len(args) > 0 {
+		name = args[0]
+		history, err = LoadSession(name)
+	} else {
+		name, history, err = LatestSession()
+	}
+	if err != nil {
+		return CommandResult{Handled: true, Reply: "resume failed: " + err.Error()}
+	}
+	return CommandResult{Handled: true, Reply: "resumed session " + name, History: history}
+}
+
+func sessionsCommand() CommandResult {
+	names, err := ListSessions()
+	if err != nil {
+		return CommandResult{Handled: true, Reply: "sessions failed: " + err.Error()}
+	}
+	if len(names) == 0 {
+		return CommandResult{Handled: true, Reply: "no saved sessions"}
+	}
+	return CommandResult{Handled: true, Reply: strings.Join(names, "\n")}
+}
+
 func helpText() string {
 	return strings.Join([]string{
-		"/help  - show this help",
-		"/tools - list available tools",
-		"/clear - reset the conversation (keeps the system prompt)",
+		"/help     - show this help",
+		"/tools    - list available tools",
+		"/clear    - reset the conversation (keeps the system prompt)",
+		"/resume   - resume the latest session, or /resume <name>",
+		"/sessions - list saved sessions",
 	}, "\n")
 }
 

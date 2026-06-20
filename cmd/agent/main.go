@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,13 +17,18 @@ import (
 )
 
 func main() {
-	task := strings.Join(os.Args[1:], " ")
+	resume := flag.String("resume", "", "resume a saved session: a name, or \"latest\"")
+	flag.Parse()
+
+	task := strings.Join(flag.Args(), " ")
 	if task == "" {
 		task = "List the files in the current directory and tell me what this project does."
 	}
 
 	cfg := config.Load()
 	model := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
+	model.HTTPClient = &http.Client{Timeout: cfg.HTTPTimeout}
+	model.MaxRetries = cfg.HTTPMaxRetries
 
 	approver := agentkit.LoadApprover()
 	tools := agentkit.CodingTools(model)
@@ -35,12 +42,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	history := []agent.Message{
-		{Role: "system", Text: agentkit.BuildSystemPrompt()},
-		{Role: "user", Text: task},
-	}
+	history := loadHistory(*resume)
+	history = append(history, agent.Message{Role: "user", Text: task})
 
-	_, answer, err := agent.Converse(ctx, model, tools, history, agent.Hooks{
+	out, answer, err := agent.Converse(ctx, model, tools, history, agent.Hooks{
 		Observe: func(e agent.Event) {
 			fmt.Printf("🔧 %s(%s)\n", e.Tool, termui.Truncate(e.Input, 80))
 		},
@@ -49,6 +54,34 @@ func main() {
 		fmt.Println("error:", err)
 		return
 	}
+	if name := *resume; name != "" {
+		if name == "latest" {
+			name, _, _ = agentkit.LatestSession()
+		}
+		if name != "" {
+			agentkit.SaveSession(name, out)
+		}
+	}
 	fmt.Println("\n=== answer ===")
 	fmt.Println(answer)
+}
+
+// loadHistory returns a resumed session's messages, or a fresh system prompt.
+func loadHistory(resume string) []agent.Message {
+	if resume != "" {
+		var (
+			h   []agent.Message
+			err error
+		)
+		if resume == "latest" {
+			_, h, err = agentkit.LatestSession()
+		} else {
+			h, err = agentkit.LoadSession(resume)
+		}
+		if err == nil {
+			return h
+		}
+		fmt.Println("resume failed:", err)
+	}
+	return []agent.Message{{Role: "system", Text: agentkit.BuildSystemPrompt()}}
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func sized() model {
-	m, _ := initialModel().Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ := initialModel("").Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m.(model)
 }
 

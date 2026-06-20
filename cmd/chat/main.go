@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -43,22 +46,23 @@ var (
 )
 
 type model struct {
-	vp         viewport.Model
-	ta         textarea.Model
-	llm        ollama.Model
-	tools      []agent.Tool
-	approver   *agentkit.Approver
-	history    []agent.Message
-	transcript []string
-	sub        chan tea.Msg
-	cancel     context.CancelFunc
-	pending    *approvalReq
-	streaming  bool
-	thinking   bool
-	ready      bool
+	vp          viewport.Model
+	ta          textarea.Model
+	llm         ollama.Model
+	tools       []agent.Tool
+	approver    *agentkit.Approver
+	history     []agent.Message
+	sessionName string
+	transcript  []string
+	sub         chan tea.Msg
+	cancel      context.CancelFunc
+	pending     *approvalReq
+	streaming   bool
+	thinking    bool
+	ready       bool
 }
 
-func initialModel() model {
+func initialModel(resume string) model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask the agent... (Enter to send, Ctrl+C to quit, /help for commands)"
 	ta.Focus()
@@ -69,6 +73,8 @@ func initialModel() model {
 
 	cfg := config.Load()
 	llm := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
+	llm.HTTPClient = &http.Client{Timeout: cfg.HTTPTimeout}
+	llm.MaxRetries = cfg.HTTPMaxRetries
 	approver := agentkit.LoadApprover()
 	sub := make(chan tea.Msg, 64)
 
@@ -79,15 +85,46 @@ func initialModel() model {
 		}
 	}
 
-	return model{
-		ta:         ta,
-		llm:        llm,
-		tools:      tools,
-		approver:   approver,
-		history:    []agent.Message{{Role: "system", Text: agentkit.BuildSystemPrompt()}},
-		transcript: []string{hintStyle.Render("Coding agent ready. Type a message and press Enter.")},
-		sub:        sub,
+	history := []agent.Message{{Role: "system", Text: agentkit.BuildSystemPrompt()}}
+	banner := "Coding agent ready. Type a message and press Enter."
+	if resume != "" {
+		if loaded, name, err := loadResume(resume); err != nil {
+			banner = "resume failed: " + err.Error()
+		} else {
+			history = loaded
+			resume = name
+			banner = "resumed session " + name
+		}
 	}
+
+	return model{
+		ta:          ta,
+		llm:         llm,
+		tools:       tools,
+		approver:    approver,
+		history:     history,
+		sessionName: sessionName(resume),
+		transcript:  []string{hintStyle.Render(banner)},
+		sub:         sub,
+	}
+}
+
+// loadResume loads a named session, or the latest when name is "latest".
+func loadResume(name string) (history []agent.Message, resolved string, err error) {
+	if name == "latest" {
+		resolved, history, err = agentkit.LatestSession()
+		return history, resolved, err
+	}
+	history, err = agentkit.LoadSession(name)
+	return history, name, err
+}
+
+// sessionName returns the resumed name or a fresh timestamped one.
+func sessionName(resumed string) string {
+	if resumed != "" {
+		return resumed
+	}
+	return "session-" + time.Now().Format("20060102-150405")
 }
 
 // gate wraps a mutating tool so it asks the UI thread for approval and blocks
@@ -194,6 +231,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.push(errStyle.Render("error: " + msg.err.Error()))
 		} else {
 			m.history = msg.history
+			if _, err := agentkit.SaveSession(m.sessionName, m.history); err != nil {
+				m.push(hintStyle.Render("session not saved: " + err.Error()))
+			}
 		}
 		return m, nil
 	}
@@ -264,7 +304,10 @@ func (m model) View() string {
 }
 
 func main() {
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+	resume := flag.String("resume", "", "resume a saved session: a name, or \"latest\"")
+	flag.Parse()
+
+	p := tea.NewProgram(initialModel(*resume), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("error:", err)
 	}
