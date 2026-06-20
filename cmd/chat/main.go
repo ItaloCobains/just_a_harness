@@ -310,6 +310,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.vp.GotoBottom()
 			} else if answer != "" {
 				m.push(m.agentBubble(answer))
+			} else {
+				m.push(hintStyle.Render("(agent finished without a message)"))
 			}
 			m.agentIdx = -1
 			m.history = msg.history
