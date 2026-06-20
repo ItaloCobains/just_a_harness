@@ -169,6 +169,17 @@ func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 	var content strings.Builder
 	var calls []agent.ToolCall
 
+	// Some models (qwen2.5-coder) emit a tool call as a JSON object in the
+	// content channel. Withhold streaming until the first non-empty text
+	// reveals whether this turn is prose or a tool call, so the raw JSON never
+	// leaks into the UI.
+	decided, suppress := false, false
+	emit := func(s string) {
+		if onDelta != nil && !suppress {
+			onDelta(s)
+		}
+	}
+
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -182,8 +193,14 @@ func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 		}
 		if chunk.Message.Content != "" {
 			content.WriteString(chunk.Message.Content)
-			if onDelta != nil {
-				onDelta(chunk.Message.Content)
+			if !decided {
+				if trimmed := strings.TrimSpace(content.String()); trimmed != "" {
+					decided = true
+					suppress = strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "```")
+					emit(content.String()) // flush what buffered before the decision
+				}
+			} else {
+				emit(chunk.Message.Content)
 			}
 		}
 		for _, tc := range chunk.Message.ToolCalls {
