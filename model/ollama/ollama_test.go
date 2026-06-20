@@ -61,6 +61,20 @@ func TestParseStepToolCallUnclosedFence(t *testing.T) {
 	}
 }
 
+func TestParseStepBareToolCallAfterProse(t *testing.T) {
+	// qwen sometimes writes prose then a bare (unfenced) JSON tool call.
+	content := "Claro! Vou criar o arquivo.\n\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"qsort.rs\", \"content\": \"fn main(){}\"}}"
+
+	call := firstCall(t, parse(t, chatBody(content)))
+
+	if call.Name != "write_file" {
+		t.Fatalf("Name = %q, want write_file", call.Name)
+	}
+	if !strings.Contains(call.Input, "qsort.rs") {
+		t.Fatalf("arguments lost: %q", call.Input)
+	}
+}
+
 func TestParseStepToolCallEmbeddedInProse(t *testing.T) {
 	content := "Sure, let's write it:\n\n```json\n{\"name\":\"write_file\",\"arguments\":{\"path\":\"x.md\",\"content\":\"hi\"}}\n```\nDone."
 

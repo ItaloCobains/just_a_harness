@@ -245,19 +245,35 @@ func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 
 func toolCallFromText(content string) (agent.ToolCall, bool) {
 	for _, candidate := range jsonCandidates(content) {
-		var call struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
+		if call, ok := decodeCall(candidate); ok {
+			return call, true
 		}
-		// Decode the first JSON value and ignore any trailing junk. Smaller
-		// models often emit a stray extra brace or a comment after the object,
-		// which a strict json.Unmarshal would reject outright.
-		if err := json.NewDecoder(strings.NewReader(candidate)).Decode(&call); err != nil {
-			continue
+	}
+	// Last resort: the model wrote prose and then a bare JSON tool call. Try
+	// decoding from each '{' until one yields a valid call. The name+arguments
+	// check keeps stray braces in prose from matching.
+	for i := 0; i < len(content); i++ {
+		if content[i] == '{' {
+			if call, ok := decodeCall(content[i:]); ok {
+				return call, true
+			}
 		}
-		if call.Name != "" && len(call.Arguments) > 0 {
-			return agent.ToolCall{ID: "call_0", Name: call.Name, Input: string(call.Arguments)}, true
-		}
+	}
+	return agent.ToolCall{}, false
+}
+
+// decodeCall reads the first JSON value from s and returns it as a tool call if
+// it has a name and arguments. It tolerates trailing junk after the object.
+func decodeCall(s string) (agent.ToolCall, bool) {
+	var call struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.NewDecoder(strings.NewReader(s)).Decode(&call); err != nil {
+		return agent.ToolCall{}, false
+	}
+	if call.Name != "" && len(call.Arguments) > 0 {
+		return agent.ToolCall{ID: "call_0", Name: call.Name, Input: string(call.Arguments)}, true
 	}
 	return agent.ToolCall{}, false
 }
