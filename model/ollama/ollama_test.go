@@ -47,6 +47,20 @@ func TestParseStepToolCallWithTrailingBrace(t *testing.T) {
 	}
 }
 
+func TestParseStepToolCallUnclosedFence(t *testing.T) {
+	// qwen2.5-coder sometimes opens ```json but never closes the fence.
+	content := "```json\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"a.html\", \"content\": \"<h1>hi</h1>\"}}"
+
+	call := firstCall(t, parse(t, chatBody(content)))
+
+	if call.Name != "write_file" {
+		t.Fatalf("Name = %q, want write_file", call.Name)
+	}
+	if !strings.Contains(call.Input, "a.html") {
+		t.Fatalf("arguments lost: %q", call.Input)
+	}
+}
+
 func TestParseStepToolCallEmbeddedInProse(t *testing.T) {
 	content := "Sure, let's write it:\n\n```json\n{\"name\":\"write_file\",\"arguments\":{\"path\":\"x.md\",\"content\":\"hi\"}}\n```\nDone."
 

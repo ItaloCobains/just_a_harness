@@ -270,6 +270,9 @@ func jsonCandidates(content string) []string {
 		}
 		end := strings.Index(rest, "```")
 		if end == -1 {
+			// Unclosed fence: the model opened ```json but never closed it.
+			// Keep the remainder so the JSON body is still recoverable.
+			candidates = append(candidates, strings.TrimSpace(rest))
 			break
 		}
 		candidates = append(candidates, strings.TrimSpace(rest[:end]))
