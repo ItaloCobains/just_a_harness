@@ -29,7 +29,9 @@ To use a tool, reply with ONLY a single JSON object and nothing else:
 {"name": "<tool>", "arguments": { ... }}
 
 Do not describe the call in prose. Do not wrap it in code fences. Emit only the JSON.
-Use a tool ONLY when the user's request requires reading, searching, or changing files.
+Use a tool ONLY when the user's request requires reading, searching, or changing files,
+or fetching a web page. You CAN access the internet: call web_fetch with a URL to
+retrieve a page when the user asks about something online or gives a link.
 For greetings, small talk, or questions you can answer from this conversation, reply in
 plain text and do not call any tool. Never edit files unless the user explicitly asks for it.
 After a tool result comes back, decide the next tool call or give your final answer.
