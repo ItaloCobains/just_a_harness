@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -107,6 +108,26 @@ func TestRunExecutesRequestedTool(t *testing.T) {
 
 	if gotInput != "hi" {
 		t.Fatalf("tool received %q, want %q", gotInput, "hi")
+	}
+}
+
+func TestRunUnknownToolListsAvailableTools(t *testing.T) {
+	tools := []Tool{okTool("run_bash", func(input string) string { return input })}
+	model := &FakeModel{steps: []Step{
+		callStep("rustc", "{}"),
+		{Done: true, Text: "ok"},
+	}}
+
+	Run(model, tools, "", "oi")
+
+	result := ""
+	for _, msg := range model.seen[1] {
+		if msg.Role == "tool" {
+			result = msg.Text
+		}
+	}
+	if !strings.Contains(result, "unknown tool") || !strings.Contains(result, "run_bash") {
+		t.Fatalf("unknown-tool result should name available tools, got %q", result)
 	}
 }
 

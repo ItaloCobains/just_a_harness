@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 const maxTurns = 25
@@ -136,7 +138,13 @@ func runOne(ctx context.Context, byName map[string]Tool, call ToolCall, h Hooks)
 
 	tool, ok := byName[call.Name]
 	if !ok {
-		return fmt.Sprintf("error: unknown tool %q", call.Name)
+		names := make([]string, 0, len(byName))
+		for n := range byName {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		return fmt.Sprintf("error: unknown tool %q. Available tools: %s. To run a shell command (compilers, scripts, etc.) use run_bash.",
+			call.Name, strings.Join(names, ", "))
 	}
 
 	out, err := tool.Func(ctx, call.Input)
