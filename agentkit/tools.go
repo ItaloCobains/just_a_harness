@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,12 +15,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"harness/agent"
 )
 
+const webFetchLimit = 10_000
+
 const SystemPrompt = `You are a coding assistant working in the current directory.
-You have tools: read_file, list_dir, write_file, edit_file, run_bash, grep, glob, task.
+You have tools: read_file, list_dir, write_file, edit_file, run_bash, grep, glob, web_fetch, task.
 
 To use a tool, reply with ONLY a single JSON object and nothing else:
 {"name": "<tool>", "arguments": { ... }}
@@ -57,6 +64,7 @@ func CodingTools(model agent.Model) []agent.Tool {
 		runBashTool(),
 		grepTool(),
 		globTool(),
+		webFetchTool(),
 		taskTool(model),
 	}
 }
@@ -273,6 +281,87 @@ func isBinary(data []byte) bool {
 		}
 	}
 	return false
+}
+
+func webFetchTool() agent.Tool {
+	return agent.Tool{
+		Name:        "web_fetch",
+		Description: "Fetch a web page over HTTP(S) and return its text content (HTML stripped, truncated).",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"url":     map[string]any{"type": "string", "description": "the http or https URL to fetch"},
+				"timeout": map[string]any{"type": "integer", "description": "request timeout in seconds (optional, default 10)"},
+			},
+			"required": []string{"url"},
+		},
+		Func: func(ctx context.Context, input string) (string, error) {
+			raw := arg(input, "url")
+			if raw == "" {
+				return "", ErrMissingArg
+			}
+			u, err := url.Parse(raw)
+			if err != nil {
+				return "", err
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return "", fmt.Errorf("unsupported url scheme %q", u.Scheme)
+			}
+
+			timeout := 10 * time.Second
+			if secs := argInt(input, "timeout"); secs > 0 {
+				timeout = time.Duration(secs) * time.Second
+			}
+			client := &http.Client{Timeout: timeout}
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+			if err != nil {
+				return "", err
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				return "", err
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 4*webFetchLimit))
+			if err != nil {
+				return "", err
+			}
+			return htmlToText(string(body)), nil
+		},
+	}
+}
+
+func argInt(input, key string) int {
+	var m map[string]any
+	json.Unmarshal([]byte(input), &m)
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case string:
+		n, _ := strconv.Atoi(v)
+		return n
+	}
+	return 0
+}
+
+var (
+	htmlScriptStyle = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
+	htmlTag         = regexp.MustCompile(`(?s)<[^>]+>`)
+	htmlSpace       = regexp.MustCompile(`[ \t]*\n[ \t\n]*`)
+)
+
+// htmlToText strips tags from HTML for a readable, truncated plain-text view.
+func htmlToText(s string) string {
+	s = htmlScriptStyle.ReplaceAllString(s, "")
+	s = htmlTag.ReplaceAllString(s, " ")
+	s = htmlSpace.ReplaceAllString(s, "\n")
+	s = strings.TrimSpace(s)
+	if len(s) > webFetchLimit {
+		s = s[:webFetchLimit] + "\n\n[truncated]"
+	}
+	return s
 }
 
 func objectSchema(name, desc string) map[string]any {

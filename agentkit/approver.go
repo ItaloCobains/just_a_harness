@@ -75,5 +75,6 @@ func (a *Approver) Decide(tool, answer string) (run bool, denied string) {
 	}
 }
 
-// Mutating is the set of tool names that change the filesystem or run commands.
-var Mutating = map[string]bool{"write_file": true, "edit_file": true, "run_bash": true}
+// Mutating is the set of tool names gated behind user approval: those that
+// change the filesystem, run commands, or reach external networks.
+var Mutating = map[string]bool{"write_file": true, "edit_file": true, "run_bash": true, "web_fetch": true}
