@@ -43,6 +43,25 @@ func TestChatRendersToolCall(t *testing.T) {
 	}
 }
 
+func TestChatShowsToolResult(t *testing.T) {
+	next, _ := sized().Update(toolMsg(agent.Event{Tool: "web_search", Input: `{"query":"go"}`, Result: "1. The Go Language"}))
+	m := next.(model)
+
+	if !strings.Contains(m.render(), "The Go Language") {
+		t.Fatalf("transcript missing tool result, got:\n%s", m.render())
+	}
+}
+
+func TestChatRendersAnswerAfterStreaming(t *testing.T) {
+	next, _ := sized().Update(deltaMsg("# Title"))
+	next, _ = next.(model).Update(doneMsg{answer: "# Title"})
+	m := next.(model)
+
+	if !strings.Contains(m.render(), "Title") {
+		t.Fatalf("rendered answer missing, got:\n%s", m.render())
+	}
+}
+
 func TestChatShowsThinkingInView(t *testing.T) {
 	m := sized()
 	m.thinking = true

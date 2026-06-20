@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"harness/agent"
@@ -51,6 +53,7 @@ var (
 type model struct {
 	vp          viewport.Model
 	ta          textarea.Model
+	spinner     spinner.Model
 	llm         ollama.Model
 	tools       []agent.Tool
 	approver    *agentkit.Approver
@@ -60,6 +63,8 @@ type model struct {
 	sub         chan tea.Msg
 	cancel      context.CancelFunc
 	pending     *approvalReq
+	start       time.Time
+	agentIdx    int // transcript index of the current Agent bubble, -1 when none
 	streaming   bool
 	thinking    bool
 	ready       bool
@@ -80,6 +85,10 @@ func initialModel(resume string) model {
 	llm.MaxRetries = cfg.HTTPMaxRetries
 	approver := agentkit.LoadApprover()
 	sub := make(chan tea.Msg, 64)
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = statusStyle
 
 	tools := agentkit.CodingTools(llm)
 	for i, t := range tools {
@@ -102,6 +111,7 @@ func initialModel(resume string) model {
 
 	return model{
 		ta:          ta,
+		spinner:     sp,
 		llm:         llm,
 		tools:       tools,
 		approver:    approver,
@@ -109,6 +119,7 @@ func initialModel(resume string) model {
 		sessionName: sessionName(resume),
 		transcript:  []string{hintStyle.Render(banner)},
 		sub:         sub,
+		agentIdx:    -1,
 	}
 }
 
@@ -178,6 +189,28 @@ func toolSummary(name, input string) string {
 	return name + " · " + strings.Join(parts, ", ")
 }
 
+// renderMarkdown pretty-prints an agent answer. It falls back to the raw text
+// if glamour is unavailable or the render fails.
+func renderMarkdown(s string, width int) string {
+	if width <= 6 {
+		width = 80
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(width-4))
+	if err != nil {
+		return s
+	}
+	out, err := r.Render(s)
+	if err != nil {
+		return s
+	}
+	return strings.Trim(out, "\n")
+}
+
+// agentBubble renders an "Agent" turn with its markdown-formatted answer.
+func (m *model) agentBubble(answer string) string {
+	return botStyle.Render("Agent") + "\n" + renderMarkdown(answer, m.vp.Width)
+}
+
 func (m *model) render() string {
 	body := strings.Join(m.transcript, "\n\n")
 	if m.vp.Width > 0 {
@@ -231,6 +264,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.submit()
 		}
 
+	case spinner.TickMsg:
+		if !m.thinking {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
 	case approvalReq:
 		m.pending = &msg
 		m.push(statusStyle.Render("Allow " + toolSummary(msg.name, msg.input) + " ? [y/N/a]"))
@@ -239,6 +280,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deltaMsg:
 		if !m.streaming {
 			m.push(botStyle.Render("Agent") + "\n")
+			m.agentIdx = len(m.transcript) - 1
 			m.streaming = true
 		}
 		m.appendToLast(string(msg))
@@ -246,7 +288,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toolMsg:
 		m.streaming = false
+		m.agentIdx = -1
 		m.push(toolStyle.Render("🔧 " + toolSummary(msg.Tool, msg.Input)))
+		if result := strings.TrimSpace(msg.Result); result != "" {
+			m.push(toolStyle.Render("  ↳ " + termui.Truncate(strings.ReplaceAll(result, "\n", " "), 200)))
+		}
 		return m, waitFor(m.sub)
 
 	case doneMsg:
@@ -257,9 +303,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.push(errStyle.Render("error: " + msg.err.Error()))
 		} else {
-			if !streamed && strings.TrimSpace(msg.answer) != "" {
-				m.push(botStyle.Render("Agent") + "\n" + msg.answer)
+			answer := strings.TrimSpace(msg.answer)
+			if streamed && m.agentIdx >= 0 && m.agentIdx < len(m.transcript) {
+				m.transcript[m.agentIdx] = m.agentBubble(answer)
+				m.vp.SetContent(m.render())
+				m.vp.GotoBottom()
+			} else if answer != "" {
+				m.push(m.agentBubble(answer))
 			}
+			m.agentIdx = -1
 			m.history = msg.history
 			if _, err := agentkit.SaveSession(m.sessionName, m.history); err != nil {
 				m.push(hintStyle.Render("session not saved: " + err.Error()))
@@ -304,6 +356,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	}
 
 	m.thinking = true
+	m.start = time.Now()
 	m.history = append(m.history, agent.Message{Role: "user", Text: input})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -317,7 +370,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 		})
 		sub <- doneMsg{out, answer, err}
 	}()
-	return m, waitFor(m.sub)
+	return m, tea.Batch(waitFor(m.sub), m.spinner.Tick)
 }
 
 func (m model) View() string {
@@ -328,7 +381,8 @@ func (m model) View() string {
 	if m.pending != nil {
 		status = statusStyle.Render("● awaiting approval")
 	} else if m.thinking {
-		status = statusStyle.Render("● thinking... (Ctrl+C to interrupt)")
+		elapsed := int(time.Since(m.start).Seconds())
+		status = m.spinner.View() + statusStyle.Render(fmt.Sprintf("thinking %ds · Ctrl+C to interrupt", elapsed))
 	}
 	return fmt.Sprintf("%s\n%s\n%s", m.vp.View(), status, m.ta.View())
 }
@@ -337,7 +391,7 @@ func main() {
 	resume := flag.String("resume", "", "resume a saved session: a name, or \"latest\"")
 	flag.Parse()
 
-	p := tea.NewProgram(initialModel(*resume), tea.WithAltScreen())
+	p := tea.NewProgram(initialModel(*resume), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("error:", err)
 	}
