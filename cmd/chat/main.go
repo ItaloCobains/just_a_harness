@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -157,8 +159,31 @@ func waitFor(sub chan tea.Msg) tea.Cmd {
 	return func() tea.Msg { return <-sub }
 }
 
+// toolSummary renders a tool call as "name · key: value, ..." instead of raw
+// JSON, truncating long values so a URL or query stays readable.
+func toolSummary(name, input string) string {
+	var args map[string]any
+	if json.Unmarshal([]byte(input), &args) != nil || len(args) == 0 {
+		return name
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s: %s", k, termui.Truncate(fmt.Sprint(args[k]), 70)))
+	}
+	return name + " · " + strings.Join(parts, ", ")
+}
+
 func (m *model) render() string {
-	return strings.Join(m.transcript, "\n\n")
+	body := strings.Join(m.transcript, "\n\n")
+	if m.vp.Width > 0 {
+		body = lipgloss.NewStyle().Width(m.vp.Width).Render(body)
+	}
+	return body
 }
 
 func (m *model) push(line string) {
@@ -208,7 +233,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalReq:
 		m.pending = &msg
-		m.push(hintStyle.Render(fmt.Sprintf("Allow %s(%s)? [y/N/a]", msg.name, termui.Truncate(msg.input, 80))))
+		m.push(statusStyle.Render("Allow " + toolSummary(msg.name, msg.input) + " ? [y/N/a]"))
 		return m, waitFor(m.sub)
 
 	case deltaMsg:
@@ -221,16 +246,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toolMsg:
 		m.streaming = false
-		m.push(toolStyle.Render(fmt.Sprintf("🔧 %s(%s)", msg.Tool, termui.Truncate(msg.Input, 80))))
+		m.push(toolStyle.Render("🔧 " + toolSummary(msg.Tool, msg.Input)))
 		return m, waitFor(m.sub)
 
 	case doneMsg:
+		streamed := m.streaming
 		m.thinking = false
 		m.streaming = false
 		m.cancel = nil
 		if msg.err != nil {
 			m.push(errStyle.Render("error: " + msg.err.Error()))
 		} else {
+			if !streamed && strings.TrimSpace(msg.answer) != "" {
+				m.push(botStyle.Render("Agent") + "\n" + msg.answer)
+			}
 			m.history = msg.history
 			if _, err := agentkit.SaveSession(m.sessionName, m.history); err != nil {
 				m.push(hintStyle.Render("session not saved: " + err.Error()))
