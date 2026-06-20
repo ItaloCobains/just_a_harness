@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"harness"
+	"harness/agent"
 )
 
 func TestHandleCommandPassesThroughOrdinaryInput(t *testing.T) {
@@ -15,7 +15,7 @@ func TestHandleCommandPassesThroughOrdinaryInput(t *testing.T) {
 }
 
 func TestHandleClearKeepsSystem(t *testing.T) {
-	history := []harness.Message{
+	history := []agent.Message{
 		{Role: "system", Text: "sys"},
 		{Role: "user", Text: "oi"},
 		{Role: "assistant", Text: "ola"},
@@ -38,7 +38,7 @@ func TestHandleUnknownCommandShowsHelp(t *testing.T) {
 }
 
 func TestHandleToolsListsNames(t *testing.T) {
-	tools := []harness.Tool{{Name: "read_file"}, {Name: "grep"}}
+	tools := []agent.Tool{{Name: "read_file"}, {Name: "grep"}}
 	res := HandleCommand("/tools", nil, tools)
 	if !res.Handled {
 		t.Fatal("/tools must be handled")

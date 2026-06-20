@@ -1,4 +1,5 @@
-package harness
+// Package ollama implements agent.Model against an Ollama HTTP endpoint.
+package ollama
 
 import (
 	"bufio"
@@ -9,14 +10,22 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"harness/agent"
 )
 
-type OllamaModel struct {
+// Model talks to an Ollama server's /api/chat endpoint.
+type Model struct {
 	Model    string
 	Endpoint string
 }
 
-func ollamaToolDef(tool Tool) map[string]any {
+// New builds a Model for the given model name and endpoint.
+func New(model, endpoint string) Model {
+	return Model{Model: model, Endpoint: endpoint}
+}
+
+func ollamaToolDef(tool agent.Tool) map[string]any {
 	return map[string]any{
 		"type": "function",
 		"function": map[string]any{
@@ -27,7 +36,7 @@ func ollamaToolDef(tool Tool) map[string]any {
 	}
 }
 
-func (m OllamaModel) Next(ctx context.Context, messages []Message, tools []Tool, onDelta func(string)) (Step, error) {
+func (m Model) Next(ctx context.Context, messages []agent.Message, tools []agent.Tool, onDelta func(string)) (agent.Step, error) {
 	chat := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
 		entry := map[string]any{"role": msg.Role, "content": msg.Text}
@@ -60,13 +69,13 @@ func (m OllamaModel) Next(ctx context.Context, messages []Message, tools []Tool,
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.Endpoint+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return Step{}, err
+		return agent.Step{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return Step{}, err
+		return agent.Step{}, err
 	}
 	defer resp.Body.Close()
 
@@ -87,9 +96,9 @@ type chatChunk struct {
 	Done bool `json:"done"`
 }
 
-func parseStream(r io.Reader, onDelta func(string)) (Step, error) {
+func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 	var content strings.Builder
-	var calls []ToolCall
+	var calls []agent.ToolCall
 
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -100,7 +109,7 @@ func parseStream(r io.Reader, onDelta func(string)) (Step, error) {
 		}
 		var chunk chatChunk
 		if err := json.Unmarshal(line, &chunk); err != nil {
-			return Step{}, err
+			return agent.Step{}, err
 		}
 		if chunk.Message.Content != "" {
 			content.WriteString(chunk.Message.Content)
@@ -109,7 +118,7 @@ func parseStream(r io.Reader, onDelta func(string)) (Step, error) {
 			}
 		}
 		for _, tc := range chunk.Message.ToolCalls {
-			calls = append(calls, ToolCall{
+			calls = append(calls, agent.ToolCall{
 				ID:    "call_" + strconv.Itoa(len(calls)),
 				Name:  tc.Function.Name,
 				Input: string(tc.Function.Arguments),
@@ -117,23 +126,23 @@ func parseStream(r io.Reader, onDelta func(string)) (Step, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return Step{}, err
+		return agent.Step{}, err
 	}
 
 	if len(calls) > 0 {
-		return Step{ToolCalls: calls}, nil
+		return agent.Step{ToolCalls: calls}, nil
 	}
 
 	// Alguns modelos (qwen2.5-coder) emitem a chamada como texto no content
 	// em vez de usar o canal nativo. Tolera esse formato.
 	if call, ok := toolCallFromText(content.String()); ok {
-		return Step{ToolCalls: []ToolCall{call}}, nil
+		return agent.Step{ToolCalls: []agent.ToolCall{call}}, nil
 	}
 
-	return Step{Done: true, Text: content.String()}, nil
+	return agent.Step{Done: true, Text: content.String()}, nil
 }
 
-func toolCallFromText(content string) (ToolCall, bool) {
+func toolCallFromText(content string) (agent.ToolCall, bool) {
 	for _, candidate := range jsonCandidates(content) {
 		var call struct {
 			Name      string          `json:"name"`
@@ -143,10 +152,10 @@ func toolCallFromText(content string) (ToolCall, bool) {
 			continue
 		}
 		if call.Name != "" && len(call.Arguments) > 0 {
-			return ToolCall{ID: "call_0", Name: call.Name, Input: string(call.Arguments)}, true
+			return agent.ToolCall{ID: "call_0", Name: call.Name, Input: string(call.Arguments)}, true
 		}
 	}
-	return ToolCall{}, false
+	return agent.ToolCall{}, false
 }
 
 // jsonCandidates returns the trimmed content plus the inner text of every

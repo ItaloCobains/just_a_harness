@@ -1,9 +1,11 @@
-package harness
+package ollama
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"harness/agent"
 )
 
 func chatBody(content string) string {
@@ -14,7 +16,7 @@ func chatBody(content string) string {
 	return string(body)
 }
 
-func parse(t *testing.T, ndjson string) Step {
+func parse(t *testing.T, ndjson string) agent.Step {
 	t.Helper()
 	step, err := parseStream(strings.NewReader(ndjson), nil)
 	if err != nil {
@@ -23,7 +25,7 @@ func parse(t *testing.T, ndjson string) Step {
 	return step
 }
 
-func firstCall(t *testing.T, step Step) ToolCall {
+func firstCall(t *testing.T, step agent.Step) agent.ToolCall {
 	t.Helper()
 	if len(step.ToolCalls) == 0 {
 		t.Fatalf("expected a tool call, got %+v", step)
@@ -93,7 +95,7 @@ func TestParseStepPlainAnswerNotMistakenForToolCall(t *testing.T) {
 }
 
 func TestOllamaToolDefFromTool(t *testing.T) {
-	tool := Tool{
+	tool := agent.Tool{
 		Name:        "read_file",
 		Description: "Read a file",
 		Schema:      map[string]any{"type": "object"},

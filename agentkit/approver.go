@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -56,6 +57,21 @@ func (a *Approver) Always(tool string) {
 	}
 	if data, err := json.Marshal(names); err == nil {
 		os.WriteFile(a.path, data, 0o644)
+	}
+}
+
+// Decide applies a user's y/N/a answer for a tool call. "y" approves once, "a"
+// approves and remembers the tool via Always, anything else denies. It returns
+// whether the call should run and, when denied, the message to surface instead.
+func (a *Approver) Decide(tool, answer string) (run bool, denied string) {
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "a":
+		a.Always(tool)
+		return true, ""
+	case "y":
+		return true, ""
+	default:
+		return false, "denied by user"
 	}
 }
 

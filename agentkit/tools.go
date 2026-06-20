@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"harness"
+	"harness/agent"
 )
 
 const SystemPrompt = `You are a coding assistant working in the current directory.
@@ -48,8 +48,8 @@ func arg(input, key string) string {
 
 // CodingTools returns the file-system and shell tools for a coding agent. The
 // model is used by the task tool to spawn read-only search subagents.
-func CodingTools(model harness.Model) []harness.Tool {
-	return []harness.Tool{
+func CodingTools(model agent.Model) []agent.Tool {
+	return []agent.Tool{
 		readFileTool(),
 		listDirTool(),
 		writeFileTool(),
@@ -61,8 +61,8 @@ func CodingTools(model harness.Model) []harness.Tool {
 	}
 }
 
-func readFileTool() harness.Tool {
-	return harness.Tool{
+func readFileTool() agent.Tool {
+	return agent.Tool{
 		Name:        "read_file",
 		Description: "Read the full contents of a file at the given path.",
 		Schema:      objectSchema("path", "the file path to read"),
@@ -76,8 +76,8 @@ func readFileTool() harness.Tool {
 	}
 }
 
-func listDirTool() harness.Tool {
-	return harness.Tool{
+func listDirTool() agent.Tool {
+	return agent.Tool{
 		Name:        "list_dir",
 		Description: "List the entries (files and directories) in a directory.",
 		Schema:      objectSchema("path", "the directory path to list"),
@@ -99,8 +99,8 @@ func listDirTool() harness.Tool {
 	}
 }
 
-func writeFileTool() harness.Tool {
-	return harness.Tool{
+func writeFileTool() agent.Tool {
+	return agent.Tool{
 		Name:        "write_file",
 		Description: "Write content to a file, creating or overwriting it.",
 		Schema: map[string]any{
@@ -124,8 +124,8 @@ func writeFileTool() harness.Tool {
 	}
 }
 
-func editFileTool() harness.Tool {
-	return harness.Tool{
+func editFileTool() agent.Tool {
+	return agent.Tool{
 		Name:        "edit_file",
 		Description: "Replace an exact substring in a file. old_string must appear exactly once.",
 		Schema: map[string]any{
@@ -166,8 +166,8 @@ func editFile(path, old, new string) (string, error) {
 	}
 }
 
-func runBashTool() harness.Tool {
-	return harness.Tool{
+func runBashTool() agent.Tool {
+	return agent.Tool{
 		Name:        "run_bash",
 		Description: "Run a bash command in the working directory and return its combined output.",
 		Schema:      objectSchema("cmd", "the bash command to run"),
@@ -181,8 +181,8 @@ func runBashTool() harness.Tool {
 	}
 }
 
-func grepTool() harness.Tool {
-	return harness.Tool{
+func grepTool() agent.Tool {
+	return agent.Tool{
 		Name:        "grep",
 		Description: "Search files for a regular expression. Returns path:line:text matches.",
 		Schema: map[string]any{
@@ -242,8 +242,8 @@ func grep(pattern, root string) (string, error) {
 	return strings.Join(matches, "\n"), nil
 }
 
-func globTool() harness.Tool {
-	return harness.Tool{
+func globTool() agent.Tool {
+	return agent.Tool{
 		Name:        "glob",
 		Description: "List file paths matching a glob pattern (e.g. **/*.go via cmd/*.go style).",
 		Schema:      objectSchema("pattern", "the glob pattern to match"),

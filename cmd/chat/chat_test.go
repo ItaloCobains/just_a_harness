@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"harness"
+	"harness/agent"
 )
 
 func sized() model {
@@ -35,7 +35,7 @@ func TestChatDoneClearsThinking(t *testing.T) {
 }
 
 func TestChatRendersToolCall(t *testing.T) {
-	next, _ := sized().Update(toolMsg(harness.Event{Tool: "read_file", Input: `{"path":"go.mod"}`}))
+	next, _ := sized().Update(toolMsg(agent.Event{Tool: "read_file", Input: `{"path":"go.mod"}`}))
 	m := next.(model)
 
 	if !strings.Contains(m.render(), "read_file") {

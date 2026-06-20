@@ -7,8 +7,11 @@ import (
 	"os/signal"
 	"strings"
 
-	"harness"
+	"harness/agent"
 	"harness/agentkit"
+	"harness/config"
+	"harness/internal/termui"
+	"harness/model/ollama"
 )
 
 func main() {
@@ -17,7 +20,8 @@ func main() {
 		task = "List the files in the current directory and tell me what this project does."
 	}
 
-	model := harness.OllamaModel{Model: "qwen2.5-coder:7b", Endpoint: "http://localhost:11434"}
+	cfg := config.Load()
+	model := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
 
 	approver := agentkit.LoadApprover()
 	tools := agentkit.CodingTools(model)
@@ -31,14 +35,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	history := []harness.Message{
+	history := []agent.Message{
 		{Role: "system", Text: agentkit.BuildSystemPrompt()},
 		{Role: "user", Text: task},
 	}
 
-	_, answer, err := harness.Converse(ctx, model, tools, history, harness.Hooks{
-		Observe: func(e harness.Event) {
-			fmt.Printf("🔧 %s(%s)\n", e.Tool, truncate(e.Input, 80))
+	_, answer, err := agent.Converse(ctx, model, tools, history, agent.Hooks{
+		Observe: func(e agent.Event) {
+			fmt.Printf("🔧 %s(%s)\n", e.Tool, termui.Truncate(e.Input, 80))
 		},
 	})
 	if err != nil {
@@ -47,12 +51,4 @@ func main() {
 	}
 	fmt.Println("\n=== answer ===")
 	fmt.Println(answer)
-}
-
-func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
 }

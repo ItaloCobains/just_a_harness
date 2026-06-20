@@ -31,6 +31,37 @@ func TestApproverAlwaysPersists(t *testing.T) {
 	}
 }
 
+func TestApproverDecide(t *testing.T) {
+	cases := []struct {
+		answer     string
+		wantRun    bool
+		wantDenied string
+	}{
+		{"y", true, ""},
+		{" Y\n", true, ""},
+		{"n", false, "denied by user"},
+		{"", false, "denied by user"},
+		{"garbage", false, "denied by user"},
+	}
+	for _, c := range cases {
+		a := &Approver{path: filepath.Join(t.TempDir(), "allow.json"), allowed: map[string]bool{}}
+		run, denied := a.Decide("run_bash", c.answer)
+		if run != c.wantRun || denied != c.wantDenied {
+			t.Errorf("Decide(%q) = (%v, %q), want (%v, %q)", c.answer, run, denied, c.wantRun, c.wantDenied)
+		}
+	}
+}
+
+func TestApproverDecideAlwaysPersists(t *testing.T) {
+	a := &Approver{path: filepath.Join(t.TempDir(), ".harness/allow.json"), allowed: map[string]bool{}}
+	if run, _ := a.Decide("run_bash", "a"); !run {
+		t.Fatal(`"a" should approve the call`)
+	}
+	if !a.Allowed("run_bash") {
+		t.Fatal(`"a" should remember the tool via Always`)
+	}
+}
+
 func TestLoadApproverMissingFileIsEmpty(t *testing.T) {
 	a := &Approver{path: filepath.Join(t.TempDir(), "nope.json"), allowed: map[string]bool{}}
 	if a.Allowed("run_bash") {

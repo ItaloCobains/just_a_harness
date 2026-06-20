@@ -3,7 +3,7 @@ package agentkit
 import (
 	"context"
 
-	"harness"
+	"harness/agent"
 )
 
 const subagentPrompt = `You are a search subagent. Use read_file, list_dir, grep, and glob to
@@ -12,8 +12,8 @@ reply with a concise plain-text answer.`
 
 // taskTool spawns a fresh, read-only Converse to answer a focused sub-question,
 // isolating its exploration from the main conversation's context.
-func taskTool(model harness.Model) harness.Tool {
-	return harness.Tool{
+func taskTool(model agent.Model) agent.Tool {
+	return agent.Tool{
 		Name:        "task",
 		Description: "Delegate a focused search/investigation to a read-only subagent. Returns its final answer.",
 		Schema:      objectSchema("prompt", "the task for the subagent to investigate"),
@@ -22,11 +22,11 @@ func taskTool(model harness.Model) harness.Tool {
 			if prompt == "" {
 				return "", ErrMissingArg
 			}
-			history := []harness.Message{
+			history := []agent.Message{
 				{Role: "system", Text: subagentPrompt},
 				{Role: "user", Text: prompt},
 			}
-			_, answer, err := harness.Converse(ctx, model, ReadOnlyTools(), history, harness.Hooks{})
+			_, answer, err := agent.Converse(ctx, model, ReadOnlyTools(), history, agent.Hooks{})
 			if err != nil {
 				return "", err
 			}
@@ -36,8 +36,8 @@ func taskTool(model harness.Model) harness.Tool {
 }
 
 // ReadOnlyTools returns the subset of tools that never mutate the filesystem.
-func ReadOnlyTools() []harness.Tool {
-	return []harness.Tool{
+func ReadOnlyTools() []agent.Tool {
+	return []agent.Tool{
 		readFileTool(),
 		listDirTool(),
 		grepTool(),

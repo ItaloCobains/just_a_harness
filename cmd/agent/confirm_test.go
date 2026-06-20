@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"harness"
+	"harness/agent"
 	"harness/agentkit"
 )
 
-func okTool(name string, run *bool) harness.Tool {
-	return harness.Tool{Name: name, Func: func(_ context.Context, _ string) (string, error) {
+func okTool(name string, run *bool) agent.Tool {
+	return agent.Tool{Name: name, Func: func(_ context.Context, _ string) (string, error) {
 		*run = true
 		return "ok", nil
 	}}

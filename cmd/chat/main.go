@@ -10,11 +10,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"harness"
+	"harness/agent"
 	"harness/agentkit"
+	"harness/config"
+	"harness/internal/termui"
+	"harness/model/ollama"
 )
 
-type toolMsg harness.Event
+type toolMsg agent.Event
 
 type deltaMsg string
 
@@ -26,7 +29,7 @@ type approvalReq struct {
 }
 
 type doneMsg struct {
-	history []harness.Message
+	history []agent.Message
 	answer  string
 	err     error
 }
@@ -42,10 +45,10 @@ var (
 type model struct {
 	vp         viewport.Model
 	ta         textarea.Model
-	llm        harness.OllamaModel
-	tools      []harness.Tool
+	llm        ollama.Model
+	tools      []agent.Tool
 	approver   *agentkit.Approver
-	history    []harness.Message
+	history    []agent.Message
 	transcript []string
 	sub        chan tea.Msg
 	cancel     context.CancelFunc
@@ -64,7 +67,8 @@ func initialModel() model {
 	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
 
-	llm := harness.OllamaModel{Model: "qwen2.5-coder:7b", Endpoint: "http://localhost:11434"}
+	cfg := config.Load()
+	llm := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
 	approver := agentkit.LoadApprover()
 	sub := make(chan tea.Msg, 64)
 
@@ -80,7 +84,7 @@ func initialModel() model {
 		llm:        llm,
 		tools:      tools,
 		approver:   approver,
-		history:    []harness.Message{{Role: "system", Text: agentkit.BuildSystemPrompt()}},
+		history:    []agent.Message{{Role: "system", Text: agentkit.BuildSystemPrompt()}},
 		transcript: []string{hintStyle.Render("Coding agent ready. Type a message and press Enter.")},
 		sub:        sub,
 	}
@@ -88,7 +92,7 @@ func initialModel() model {
 
 // gate wraps a mutating tool so it asks the UI thread for approval and blocks
 // until the user answers, reusing the persistent Approver allowlist.
-func gate(tool harness.Tool, approver *agentkit.Approver, sub chan tea.Msg) harness.Tool {
+func gate(tool agent.Tool, approver *agentkit.Approver, sub chan tea.Msg) agent.Tool {
 	inner := tool.Func
 	tool.Func = func(ctx context.Context, input string) (string, error) {
 		if approver.Allowed(tool.Name) {
@@ -100,15 +104,10 @@ func gate(tool harness.Tool, approver *agentkit.Approver, sub chan tea.Msg) harn
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case ans := <-resp:
-			switch ans {
-			case "a":
-				approver.Always(tool.Name)
-				return inner(ctx, input)
-			case "y":
-				return inner(ctx, input)
-			default:
-				return "denied by user", nil
+			if run, denied := approver.Decide(tool.Name, ans); !run {
+				return denied, nil
 			}
+			return inner(ctx, input)
 		}
 	}
 	return tool
@@ -171,7 +170,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalReq:
 		m.pending = &msg
-		m.push(hintStyle.Render(fmt.Sprintf("Allow %s(%s)? [y/N/a]", msg.name, truncate(msg.input, 80))))
+		m.push(hintStyle.Render(fmt.Sprintf("Allow %s(%s)? [y/N/a]", msg.name, termui.Truncate(msg.input, 80))))
 		return m, waitFor(m.sub)
 
 	case deltaMsg:
@@ -184,7 +183,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toolMsg:
 		m.streaming = false
-		m.push(toolStyle.Render(fmt.Sprintf("🔧 %s(%s)", msg.Tool, truncate(msg.Input, 80))))
+		m.push(toolStyle.Render(fmt.Sprintf("🔧 %s(%s)", msg.Tool, termui.Truncate(msg.Input, 80))))
 		return m, waitFor(m.sub)
 
 	case doneMsg:
@@ -235,15 +234,15 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	}
 
 	m.thinking = true
-	m.history = append(m.history, harness.Message{Role: "user", Text: input})
+	m.history = append(m.history, agent.Message{Role: "user", Text: input})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 
 	sub, llm, tools, hist := m.sub, m.llm, m.tools, m.history
 	go func() {
-		out, answer, err := harness.Converse(ctx, llm, tools, hist, harness.Hooks{
-			Observe: func(e harness.Event) { sub <- toolMsg(e) },
+		out, answer, err := agent.Converse(ctx, llm, tools, hist, agent.Hooks{
+			Observe: func(e agent.Event) { sub <- toolMsg(e) },
 			Delta:   func(s string) { sub <- deltaMsg(s) },
 		})
 		sub <- doneMsg{out, answer, err}
@@ -262,14 +261,6 @@ func (m model) View() string {
 		status = hintStyle.Render(" thinking... (Ctrl+C to interrupt)")
 	}
 	return fmt.Sprintf("%s\n%s%s", m.vp.View(), m.ta.View(), status)
-}
-
-func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
 }
 
 func main() {

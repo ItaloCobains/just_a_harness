@@ -4,23 +4,23 @@ import (
 	"context"
 	"testing"
 
-	"harness"
+	"harness/agent"
 )
 
 // scriptModel returns canned steps, ignoring input.
 type scriptModel struct {
-	steps []harness.Step
+	steps []agent.Step
 	i     int
 }
 
-func (m *scriptModel) Next(_ context.Context, _ []harness.Message, _ []harness.Tool, _ func(string)) (harness.Step, error) {
+func (m *scriptModel) Next(_ context.Context, _ []agent.Message, _ []agent.Tool, _ func(string)) (agent.Step, error) {
 	s := m.steps[m.i]
 	m.i++
 	return s, nil
 }
 
 func TestTaskToolReturnsSubagentAnswer(t *testing.T) {
-	model := &scriptModel{steps: []harness.Step{{Done: true, Text: "found it"}}}
+	model := &scriptModel{steps: []agent.Step{{Done: true, Text: "found it"}}}
 	tool := taskTool(model)
 
 	out, err := tool.Func(context.Background(), `{"prompt":"where is X"}`)
