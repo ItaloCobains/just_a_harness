@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,15 +24,16 @@ import (
 const webFetchLimit = 10_000
 
 const SystemPrompt = `You are a coding assistant working in the current directory.
-You have tools: read_file, list_dir, write_file, edit_file, run_bash, grep, glob, web_fetch, task.
+You have tools: read_file, list_dir, write_file, edit_file, run_bash, grep, glob, web_search, web_fetch, task.
 
 To use a tool, reply with ONLY a single JSON object and nothing else:
 {"name": "<tool>", "arguments": { ... }}
 
 Do not describe the call in prose. Do not wrap it in code fences. Emit only the JSON.
 Use a tool ONLY when the user's request requires reading, searching, or changing files,
-or fetching a web page. You CAN access the internet: call web_fetch with a URL to
-retrieve a page when the user asks about something online or gives a link.
+or searching/fetching the web. You CAN access the internet: call web_search with a
+query to find pages when the user asks about something online, then web_fetch a result
+URL to read it. Use web_fetch directly when the user gives a link.
 For greetings, small talk, or questions you can answer from this conversation, reply in
 plain text and do not call any tool. Never edit files unless the user explicitly asks for it.
 After a tool result comes back, decide the next tool call or give your final answer.
@@ -66,6 +68,7 @@ func CodingTools(model agent.Model) []agent.Tool {
 		runBashTool(),
 		grepTool(),
 		globTool(),
+		webSearchTool(),
 		webFetchTool(),
 		taskTool(model),
 	}
@@ -333,6 +336,120 @@ func webFetchTool() agent.Tool {
 			return htmlToText(string(body)), nil
 		},
 	}
+}
+
+const (
+	ddgEndpoint       = "https://html.duckduckgo.com/html/"
+	ddgUserAgent      = "Mozilla/5.0 (compatible; harness/1.0)"
+	defaultSearchHits = 8
+)
+
+func webSearchTool() agent.Tool {
+	return agent.Tool{
+		Name:        "web_search",
+		Description: "Search the web via DuckDuckGo and return result titles, URLs, and snippets. Use web_fetch afterwards to read a result.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string", "description": "the search query"},
+				"count": map[string]any{"type": "integer", "description": "max results (optional, default 8)"},
+			},
+			"required": []string{"query"},
+		},
+		Func: func(ctx context.Context, input string) (string, error) {
+			query := arg(input, "query")
+			if query == "" {
+				return "", ErrMissingArg
+			}
+			count := argInt(input, "count")
+			if count <= 0 {
+				count = defaultSearchHits
+			}
+
+			form := url.Values{"q": {query}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, ddgEndpoint, strings.NewReader(form.Encode()))
+			if err != nil {
+				return "", err
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("User-Agent", ddgUserAgent)
+
+			resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+			if err != nil {
+				return "", err
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			if err != nil {
+				return "", err
+			}
+			results := parseDuckDuckGo(string(body))
+			if len(results) == 0 {
+				return "no results", nil
+			}
+			if len(results) > count {
+				results = results[:count]
+			}
+			return formatResults(results), nil
+		},
+	}
+}
+
+type searchResult struct {
+	Title, URL, Snippet string
+}
+
+var (
+	ddgResult  = regexp.MustCompile(`(?s)<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>`)
+	ddgSnippet = regexp.MustCompile(`(?s)<a[^>]+class="result__snippet"[^>]*>(.*?)</a>`)
+)
+
+// parseDuckDuckGo extracts results from a DuckDuckGo HTML response. Result links
+// point at a /l/?uddg=<encoded> redirect, so the real URL is decoded out of it.
+func parseDuckDuckGo(body string) []searchResult {
+	links := ddgResult.FindAllStringSubmatch(body, -1)
+	snippets := ddgSnippet.FindAllStringSubmatch(body, -1)
+
+	results := make([]searchResult, 0, len(links))
+	for i, m := range links {
+		snippet := ""
+		if i < len(snippets) {
+			snippet = cleanText(snippets[i][1])
+		}
+		results = append(results, searchResult{
+			Title:   cleanText(m[2]),
+			URL:     decodeDDGURL(m[1]),
+			Snippet: snippet,
+		})
+	}
+	return results
+}
+
+func decodeDDGURL(href string) string {
+	href = html.UnescapeString(href)
+	if u, err := url.Parse(href); err == nil {
+		if real := u.Query().Get("uddg"); real != "" {
+			return real
+		}
+	}
+	return href
+}
+
+func cleanText(s string) string {
+	s = htmlTag.ReplaceAllString(s, "")
+	return strings.TrimSpace(html.UnescapeString(s))
+}
+
+func formatResults(results []searchResult) string {
+	var b strings.Builder
+	for i, r := range results {
+		fmt.Fprintf(&b, "%d. %s\n   %s\n", i+1, r.Title, r.URL)
+		if r.Snippet != "" {
+			fmt.Fprintf(&b, "   %s\n", r.Snippet)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func argInt(input, key string) int {
