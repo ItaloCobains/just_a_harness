@@ -38,11 +38,12 @@ type doneMsg struct {
 }
 
 var (
-	userStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	botStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	toolStyle = lipgloss.NewStyle().Faint(true).Italic(true)
-	errStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	hintStyle = lipgloss.NewStyle().Faint(true)
+	userStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	botStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	toolStyle   = lipgloss.NewStyle().Faint(true).Italic(true)
+	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	hintStyle   = lipgloss.NewStyle().Faint(true)
+	statusStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 )
 
 type model struct {
@@ -179,7 +180,7 @@ func (m *model) appendToLast(s string) {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		height := msg.Height - m.ta.Height() - 2
+		height := msg.Height - m.ta.Height() - 3
 		if !m.ready {
 			m.vp = viewport.New(msg.Width, height)
 			m.vp.SetContent(m.render())
@@ -294,13 +295,13 @@ func (m model) View() string {
 	if !m.ready {
 		return "loading..."
 	}
-	status := ""
+	status := hintStyle.Render("ready")
 	if m.pending != nil {
-		status = hintStyle.Render(" awaiting approval...")
+		status = statusStyle.Render("● awaiting approval")
 	} else if m.thinking {
-		status = hintStyle.Render(" thinking... (Ctrl+C to interrupt)")
+		status = statusStyle.Render("● thinking... (Ctrl+C to interrupt)")
 	}
-	return fmt.Sprintf("%s\n%s%s", m.vp.View(), m.ta.View(), status)
+	return fmt.Sprintf("%s\n%s\n%s", m.vp.View(), status, m.ta.View())
 }
 
 func main() {
