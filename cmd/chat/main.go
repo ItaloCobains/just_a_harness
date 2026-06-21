@@ -47,6 +47,8 @@ var (
 	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	hintStyle   = lipgloss.NewStyle().Faint(true)
 	statusStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	addStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	delStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 type model struct {
@@ -210,6 +212,46 @@ func (m *model) agentBubble(answer string) string {
 	return botStyle.Render("Agent") + "\n" + renderMarkdown(answer, m.vp.Width)
 }
 
+// toolPreview renders a colored diff-style preview of a mutating tool's effect,
+// so the user sees what they are approving. Empty for non-file tools.
+func toolPreview(name, input string) string {
+	switch name {
+	case "write_file":
+		return previewBlock(argField(input, "content"), "+", addStyle, 16)
+	case "edit_file":
+		old := previewBlock(argField(input, "old_string"), "-", delStyle, 8)
+		neu := previewBlock(argField(input, "new_string"), "+", addStyle, 8)
+		return strings.TrimSpace(old + "\n" + neu)
+	default:
+		return ""
+	}
+}
+
+func previewBlock(content, prefix string, style lipgloss.Style, max int) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > max {
+		lines = append(lines[:max], "...")
+	}
+	for i, ln := range lines {
+		lines[i] = style.Render(prefix + " " + ln)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func argField(input, key string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(input), &m) != nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
 func (m *model) render() string {
 	body := strings.Join(m.transcript, "\n\n")
 	if m.vp.Width > 0 {
@@ -273,6 +315,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalReq:
 		m.pending = &msg
+		if preview := toolPreview(msg.name, msg.input); preview != "" {
+			m.push(preview)
+		}
 		m.push(statusStyle.Render("Allow " + toolSummary(msg.name, msg.input) + " ? [y/N/a]"))
 		return m, waitFor(m.sub)
 

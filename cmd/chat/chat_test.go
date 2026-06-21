@@ -70,3 +70,23 @@ func TestChatShowsThinkingInView(t *testing.T) {
 		t.Fatalf("view should show thinking indicator, got:\n%s", m.View())
 	}
 }
+
+func TestToolPreviewWriteFile(t *testing.T) {
+	out := toolPreview("write_file", `{"path":"a.txt","content":"line1\nline2"}`)
+	if !strings.Contains(out, "line1") || !strings.Contains(out, "line2") {
+		t.Fatalf("write preview missing content: %q", out)
+	}
+}
+
+func TestToolPreviewEditFileShowsBothSides(t *testing.T) {
+	out := toolPreview("edit_file", `{"path":"a","old_string":"foo","new_string":"bar"}`)
+	if !strings.Contains(out, "foo") || !strings.Contains(out, "bar") {
+		t.Fatalf("edit preview should show old and new: %q", out)
+	}
+}
+
+func TestToolPreviewEmptyForOtherTools(t *testing.T) {
+	if out := toolPreview("run_bash", `{"cmd":"ls"}`); out != "" {
+		t.Fatalf("expected no preview for run_bash, got %q", out)
+	}
+}
