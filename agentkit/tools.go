@@ -179,17 +179,65 @@ func editFile(path, old, new string) (string, error) {
 	}
 	text := string(data)
 	switch strings.Count(text, old) {
-	case 0:
-		return "", ErrNotFound
 	case 1:
-		updated := strings.Replace(text, old, new, 1)
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-			return "", err
-		}
-		return "edited " + path, nil
+		return writeEdit(path, strings.Replace(text, old, new, 1))
 	default:
-		return "", ErrAmbiguous
+		// Exact match missing or ambiguous: fall back to a whitespace-tolerant
+		// line match, which forgives indentation differences the model often
+		// gets wrong. Only a single unique block is accepted.
+		if updated, ok := fuzzyReplace(text, old, new); ok {
+			return writeEdit(path, updated)
+		}
+		if strings.Count(text, old) > 1 {
+			return "", ErrAmbiguous
+		}
+		return "", ErrNotFound
 	}
+}
+
+func writeEdit(path, content string) (string, error) {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return "edited " + path, nil
+}
+
+// fuzzyReplace matches old against text line by line ignoring leading/trailing
+// whitespace, replacing the single matching block with new. It returns ok=false
+// when there is no match or more than one.
+func fuzzyReplace(text, old, new string) (string, bool) {
+	textLines := strings.Split(text, "\n")
+	oldLines := strings.Split(strings.Trim(old, "\n"), "\n")
+	n := len(oldLines)
+	if n == 0 {
+		return "", false
+	}
+
+	match := -1
+	for i := 0; i+n <= len(textLines); i++ {
+		same := true
+		for j := 0; j < n; j++ {
+			if strings.TrimSpace(textLines[i+j]) != strings.TrimSpace(oldLines[j]) {
+				same = false
+				break
+			}
+		}
+		if same {
+			if match != -1 {
+				return "", false // ambiguous
+			}
+			match = i
+		}
+	}
+	if match == -1 {
+		return "", false
+	}
+
+	newLines := strings.Split(strings.Trim(new, "\n"), "\n")
+	out := append([]string{}, textLines[:match]...)
+	out = append(out, newLines...)
+	out = append(out, textLines[match+n:]...)
+	return strings.Join(out, "\n"), true
 }
 
 func runBashTool() agent.Tool {

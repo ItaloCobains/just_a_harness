@@ -68,3 +68,26 @@ func TestGrepNoMatches(t *testing.T) {
 		t.Fatalf("out = %q, want %q", out, "no matches")
 	}
 }
+
+func TestEditFileFuzzyMatchesIgnoringIndentation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.go")
+	os.WriteFile(path, []byte("func main() {\n\t\tx := 1\n}\n"), 0o644)
+
+	// model supplies the line without the actual indentation
+	if _, err := editFile(path, "x := 1", "x := 2"); err != nil {
+		t.Fatalf("editFile fuzzy: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "x := 2") {
+		t.Fatalf("fuzzy edit not applied: %q", data)
+	}
+}
+
+func TestEditFileFuzzyAmbiguousRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.txt")
+	os.WriteFile(path, []byte("  dup\nother\n    dup\n"), 0o644)
+
+	if _, err := editFile(path, "dup", "X"); err == nil {
+		t.Fatal("ambiguous fuzzy match should be rejected")
+	}
+}
