@@ -1,6 +1,7 @@
 package agentkit
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -89,5 +90,34 @@ func TestEditFileFuzzyAmbiguousRejected(t *testing.T) {
 
 	if _, err := editFile(path, "dup", "X"); err == nil {
 		t.Fatal("ambiguous fuzzy match should be rejected")
+	}
+}
+
+func TestReadFileLineRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.txt")
+	os.WriteFile(path, []byte("l1\nl2\nl3\nl4\nl5"), 0o644)
+
+	out, err := readFileTool().Func(context.Background(), `{"path":`+jsonString(path)+`,"offset":2,"limit":2}`)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if !strings.Contains(out, "l2") || !strings.Contains(out, "l3") {
+		t.Fatalf("range missing lines: %q", out)
+	}
+	if strings.Contains(out, "l1") || strings.Contains(out, "l4") {
+		t.Fatalf("range leaked extra lines: %q", out)
+	}
+}
+
+func TestReadFileWholeWhenNoRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.txt")
+	os.WriteFile(path, []byte("a\nb"), 0o644)
+
+	out, err := readFileTool().Func(context.Background(), `{"path":`+jsonString(path)+`}`)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if out != "a\nb" {
+		t.Fatalf("whole-file read changed: %q", out)
 	}
 }

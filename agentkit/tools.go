@@ -82,16 +82,51 @@ func CodingTools(model agent.Model) []agent.Tool {
 func readFileTool() agent.Tool {
 	return agent.Tool{
 		Name:        "read_file",
-		Description: "Read the full contents of a file at the given path.",
-		Schema:      objectSchema("path", "the file path to read"),
+		Description: "Read a file. Optionally pass offset (1-based start line) and limit (number of lines) to read a slice of a large file.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":   map[string]any{"type": "string", "description": "the file path to read"},
+				"offset": map[string]any{"type": "integer", "description": "1-based first line to read (optional)"},
+				"limit":  map[string]any{"type": "integer", "description": "number of lines to read (optional)"},
+			},
+			"required": []string{"path"},
+		},
 		Func: func(_ context.Context, input string) (string, error) {
-			data, err := os.ReadFile(arg(input, "path"))
+			path := arg(input, "path")
+			if path == "" {
+				return "", ErrMissingArg
+			}
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return "", err
 			}
-			return string(data), nil
+			offset, limit := argInt(input, "offset"), argInt(input, "limit")
+			if offset <= 0 && limit <= 0 {
+				return string(data), nil
+			}
+			return sliceLines(string(data), offset, limit), nil
 		},
 	}
+}
+
+// sliceLines returns the requested 1-based line range with a header noting the
+// span, so a model reading a chunk of a big file knows where it is.
+func sliceLines(text string, offset, limit int) string {
+	lines := strings.Split(text, "\n")
+	if offset <= 0 {
+		offset = 1
+	}
+	start := offset - 1
+	if start >= len(lines) {
+		return fmt.Sprintf("(file has %d lines; offset %d is past the end)", len(lines), offset)
+	}
+	end := len(lines)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	header := fmt.Sprintf("[lines %d-%d of %d]\n", start+1, end, len(lines))
+	return header + strings.Join(lines[start:end], "\n")
 }
 
 func listDirTool() agent.Tool {
