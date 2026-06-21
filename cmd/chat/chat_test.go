@@ -90,3 +90,29 @@ func TestToolPreviewEmptyForOtherTools(t *testing.T) {
 		t.Fatalf("expected no preview for run_bash, got %q", out)
 	}
 }
+
+func TestCommandMenuFiltersByPrefix(t *testing.T) {
+	all := commandMenu("/")
+	if !strings.Contains(all, "/help") || !strings.Contains(all, "/sessions") {
+		t.Fatalf("'/' should list all commands:\n%s", all)
+	}
+	re := commandMenu("/re")
+	if !strings.Contains(re, "/resume") || strings.Contains(re, "/help") {
+		t.Fatalf("'/re' should match only /resume:\n%s", re)
+	}
+	if commandMenu("hello") != "" {
+		t.Fatal("non-slash input should produce no menu")
+	}
+}
+
+func TestCompleteCommand(t *testing.T) {
+	if got := completeCommand("/se"); got != "/sessions" {
+		t.Fatalf("completeCommand(/se) = %q, want /sessions", got)
+	}
+	if got := completeCommand("/x"); got != "" {
+		t.Fatalf("no match should return empty, got %q", got)
+	}
+	if got := completeCommand("hi"); got != "" {
+		t.Fatalf("non-slash should return empty, got %q", got)
+	}
+}

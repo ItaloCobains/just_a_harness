@@ -1,6 +1,7 @@
 package agentkit
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -68,14 +69,30 @@ func sessionsCommand() CommandResult {
 	return CommandResult{Handled: true, Reply: strings.Join(names, "\n")}
 }
 
+// Command describes a slash command for help text and TUI autocomplete.
+type Command struct {
+	Name string
+	Desc string
+}
+
+// Commands is the canonical list of slash commands, shared by help and the TUI
+// menu so both stay in sync.
+func Commands() []Command {
+	return []Command{
+		{"/help", "show this help"},
+		{"/tools", "list available tools"},
+		{"/clear", "reset the conversation (keeps the system prompt)"},
+		{"/resume", "resume the latest session, or /resume <name>"},
+		{"/sessions", "list saved sessions"},
+	}
+}
+
 func helpText() string {
-	return strings.Join([]string{
-		"/help     - show this help",
-		"/tools    - list available tools",
-		"/clear    - reset the conversation (keeps the system prompt)",
-		"/resume   - resume the latest session, or /resume <name>",
-		"/sessions - list saved sessions",
-	}, "\n")
+	lines := make([]string, 0, len(Commands()))
+	for _, c := range Commands() {
+		lines = append(lines, fmt.Sprintf("%-9s - %s", c.Name, c.Desc))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func toolList(tools []agent.Tool) string {

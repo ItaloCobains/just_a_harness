@@ -269,6 +269,39 @@ func argField(input, key string) string {
 	return ""
 }
 
+// commandMenu lists the slash commands matching the typed prefix, for display
+// above the input. Empty when the input is not a slash command.
+func commandMenu(input string) string {
+	input = strings.TrimSpace(input)
+	if !strings.HasPrefix(input, "/") {
+		return ""
+	}
+	prefix := strings.ToLower(strings.Fields(input)[0])
+	var lines []string
+	for _, c := range agentkit.Commands() {
+		if strings.HasPrefix(c.Name, prefix) {
+			lines = append(lines, hintStyle.Render(fmt.Sprintf("%-9s %s", c.Name, c.Desc)))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// completeCommand returns the first slash command matching the typed prefix, or
+// "" if none.
+func completeCommand(input string) string {
+	input = strings.TrimSpace(input)
+	if !strings.HasPrefix(input, "/") {
+		return ""
+	}
+	prefix := strings.ToLower(input)
+	for _, c := range agentkit.Commands() {
+		if strings.HasPrefix(c.Name, prefix) {
+			return c.Name
+		}
+	}
+	return ""
+}
+
 func (m *model) render() string {
 	body := strings.Join(m.transcript, "\n\n")
 	if m.vp.Width > 0 {
@@ -320,6 +353,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case tea.KeyEnter:
 			return m.submit()
+		case tea.KeyTab:
+			if name := completeCommand(m.ta.Value()); name != "" {
+				m.ta.SetValue(name + " ")
+				m.ta.CursorEnd()
+			}
+			return m, nil
 		}
 
 	case spinner.TickMsg:
@@ -456,6 +495,8 @@ func (m model) View() string {
 	} else if m.thinking {
 		elapsed := int(time.Since(m.start).Seconds())
 		status = m.spinner.View() + statusStyle.Render(fmt.Sprintf("thinking %ds · Ctrl+C to interrupt", elapsed))
+	} else if menu := commandMenu(m.ta.Value()); menu != "" {
+		status = menu
 	}
 	return fmt.Sprintf("%s\n%s\n%s", m.vp.View(), status, m.ta.View())
 }

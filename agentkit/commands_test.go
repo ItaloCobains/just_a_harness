@@ -50,3 +50,27 @@ func TestHandleToolsListsNames(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandsListsKnownCommands(t *testing.T) {
+	names := map[string]bool{}
+	for _, c := range Commands() {
+		names[c.Name] = true
+		if c.Desc == "" {
+			t.Fatalf("command %s has no description", c.Name)
+		}
+	}
+	for _, want := range []string{"/help", "/tools", "/clear", "/resume", "/sessions"} {
+		if !names[want] {
+			t.Fatalf("missing command %s", want)
+		}
+	}
+}
+
+func TestHelpTextUsesCommands(t *testing.T) {
+	help := helpText()
+	for _, c := range Commands() {
+		if !strings.Contains(help, c.Name) {
+			t.Fatalf("help missing %s:\n%s", c.Name, help)
+		}
+	}
+}
