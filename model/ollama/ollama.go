@@ -173,13 +173,44 @@ func (m Model) Next(ctx context.Context, messages []agent.Message, tools []agent
 		return agent.Step{}, err
 	}
 
-	resp, err := m.doRequest(ctx, body)
-	if err != nil {
-		return agent.Step{}, err
-	}
-	defer resp.Body.Close()
+	// Retry a stream that stalls before producing any output (e.g. a cold model
+	// load that times out). Once tokens have streamed we must not retry, since
+	// re-running would duplicate the partial output already shown.
+	var lastErr error
+	for attempt := 0; attempt <= m.MaxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(m.backoffBase() << (attempt - 1)):
+			case <-ctx.Done():
+				return agent.Step{}, ctx.Err()
+			}
+		}
 
-	return parseStream(resp.Body, m.idleTimeout(), onDelta)
+		resp, err := m.doRequest(ctx, body)
+		if err != nil {
+			return agent.Step{}, err
+		}
+
+		streamed := false
+		wrapped := func(s string) {
+			streamed = true
+			if onDelta != nil {
+				onDelta(s)
+			}
+		}
+		step, perr := parseStream(resp.Body, m.idleTimeout(), wrapped)
+		resp.Body.Close()
+
+		if perr == nil {
+			return step, nil
+		}
+		if errors.Is(perr, errStreamStalled) && !streamed && ctx.Err() == nil {
+			lastErr = perr
+			continue
+		}
+		return agent.Step{}, perr
+	}
+	return agent.Step{}, fmt.Errorf("%w: %v", agent.ErrUpstreamUnavailable, lastErr)
 }
 
 // chatChunk is one NDJSON line of an Ollama streaming response.

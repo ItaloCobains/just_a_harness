@@ -81,3 +81,31 @@ func TestNextCanceledContextNoRetry(t *testing.T) {
 		t.Fatal("expected error on canceled context")
 	}
 }
+
+func TestNextRetriesStalledStreamBeforeFirstToken(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush() // send headers, then go silent
+			time.Sleep(200 * time.Millisecond)
+			return
+		}
+		w.Write([]byte(chatBody("hi")))
+	}))
+	defer srv.Close()
+
+	m := resilientModel(srv.URL)
+	m.IdleTimeout = 40 * time.Millisecond
+
+	step, err := m.Next(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if step.Text != "hi" {
+		t.Fatalf("text = %q, want hi", step.Text)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("calls = %d, want 2 (one stall + one success)", got)
+	}
+}
