@@ -2,8 +2,10 @@ package ollama
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // chunk renders one streaming NDJSON line carrying a content fragment.
@@ -18,7 +20,7 @@ func chunk(content string) string {
 func collectDeltas(t *testing.T, ndjson string) (string, string) {
 	t.Helper()
 	var seen strings.Builder
-	step, err := parseStream(strings.NewReader(ndjson), func(s string) { seen.WriteString(s) })
+	step, err := parseStream(strings.NewReader(ndjson), 0, func(s string) { seen.WriteString(s) })
 	if err != nil {
 		t.Fatalf("parseStream: %v", err)
 	}
@@ -43,5 +45,32 @@ func TestStreamEmitsProse(t *testing.T) {
 	}
 	if text != "Hello, world" {
 		t.Fatalf("text = %q", text)
+	}
+}
+
+// stallingReader returns one line then blocks forever, simulating a server that
+// goes silent mid-stream.
+type stallingReader struct {
+	line string
+	sent bool
+	gate chan struct{}
+}
+
+func (s *stallingReader) Read(p []byte) (int, error) {
+	if !s.sent {
+		s.sent = true
+		return copy(p, s.line), nil
+	}
+	<-s.gate // block until the test closes it
+	return 0, nil
+}
+
+func TestStreamIdleTimeout(t *testing.T) {
+	r := &stallingReader{line: chunk("Hel") + "\n", gate: make(chan struct{})}
+	defer close(r.gate)
+
+	_, err := parseStream(r, 50*time.Millisecond, nil)
+	if !errors.Is(err, errStreamStalled) {
+		t.Fatalf("err = %v, want errStreamStalled", err)
 	}
 }

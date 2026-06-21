@@ -18,7 +18,7 @@ func chatBody(content string) string {
 
 func parse(t *testing.T, ndjson string) agent.Step {
 	t.Helper()
-	step, err := parseStream(strings.NewReader(ndjson), nil)
+	step, err := parseStream(strings.NewReader(ndjson), 0, nil)
 	if err != nil {
 		t.Fatalf("parseStream: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestParseStreamAccumulatesDeltas(t *testing.T) {
 	}, "\n")
 
 	var deltas strings.Builder
-	step, err := parseStream(strings.NewReader(ndjson), func(s string) { deltas.WriteString(s) })
+	step, err := parseStream(strings.NewReader(ndjson), 0, func(s string) { deltas.WriteString(s) })
 	if err != nil {
 		t.Fatalf("parseStream: %v", err)
 	}

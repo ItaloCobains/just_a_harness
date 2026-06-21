@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,10 @@ import (
 )
 
 const defaultBackoffBase = 200 * time.Millisecond
+const defaultIdleTimeout = 90 * time.Second
+
+// errStreamStalled is returned when the server stops sending data mid-stream.
+var errStreamStalled = errors.New("ollama: stream stalled")
 
 // StreamingClient builds an HTTP client suited to a streaming chat endpoint.
 // connectTimeout bounds dialing and the wait for response headers (so a dead or
@@ -40,6 +45,7 @@ type Model struct {
 	HTTPClient  *http.Client
 	MaxRetries  int
 	BackoffBase time.Duration
+	IdleTimeout time.Duration // max gap between streamed chunks before aborting
 }
 
 // New builds a Model for the given model name and endpoint with built-in
@@ -51,7 +57,15 @@ func New(model, endpoint string) Model {
 		HTTPClient:  StreamingClient(120 * time.Second),
 		MaxRetries:  3,
 		BackoffBase: defaultBackoffBase,
+		IdleTimeout: defaultIdleTimeout,
 	}
+}
+
+func (m Model) idleTimeout() time.Duration {
+	if m.IdleTimeout > 0 {
+		return m.IdleTimeout
+	}
+	return defaultIdleTimeout
 }
 
 func (m Model) client() *http.Client {
@@ -163,7 +177,7 @@ func (m Model) Next(ctx context.Context, messages []agent.Message, tools []agent
 	}
 	defer resp.Body.Close()
 
-	return parseStream(resp.Body, onDelta)
+	return parseStream(resp.Body, m.idleTimeout(), onDelta)
 }
 
 // chatChunk is one NDJSON line of an Ollama streaming response.
@@ -180,7 +194,7 @@ type chatChunk struct {
 	Done bool `json:"done"`
 }
 
-func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
+func parseStream(r io.Reader, idle time.Duration, onDelta func(string)) (agent.Step, error) {
 	var content strings.Builder
 	var calls []agent.ToolCall
 
@@ -195,16 +209,14 @@ func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 		}
 	}
 
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
+	process := func(line []byte) error {
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
-			continue
+			return nil
 		}
 		var chunk chatChunk
 		if err := json.Unmarshal(line, &chunk); err != nil {
-			return agent.Step{}, err
+			return err
 		}
 		if chunk.Message.Content != "" {
 			content.WriteString(chunk.Message.Content)
@@ -225,8 +237,10 @@ func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 				Input: string(tc.Function.Arguments),
 			})
 		}
+		return nil
 	}
-	if err := scanner.Err(); err != nil {
+
+	if err := scanLines(r, idle, process); err != nil {
 		return agent.Step{}, err
 	}
 
@@ -241,6 +255,58 @@ func parseStream(r io.Reader, onDelta func(string)) (agent.Step, error) {
 	}
 
 	return agent.Step{Done: true, Text: content.String()}, nil
+}
+
+// scanLines reads NDJSON lines from r, calling process for each. When idle > 0,
+// it aborts with errStreamStalled if no line arrives within that window, so a
+// server that goes silent mid-generation does not hang the caller forever.
+func scanLines(r io.Reader, idle time.Duration, process func([]byte) error) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	if idle <= 0 {
+		for scanner.Scan() {
+			if err := process(scanner.Bytes()); err != nil {
+				return err
+			}
+		}
+		return scanner.Err()
+	}
+
+	lines := make(chan []byte)
+	done := make(chan struct{})
+	defer close(done)
+	errc := make(chan error, 1)
+	go func() {
+		for scanner.Scan() {
+			b := append([]byte(nil), scanner.Bytes()...)
+			select {
+			case lines <- b:
+			case <-done:
+				return
+			}
+		}
+		errc <- scanner.Err()
+	}()
+
+	timer := time.NewTimer(idle)
+	defer timer.Stop()
+	for {
+		select {
+		case b := <-lines:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(idle)
+			if err := process(b); err != nil {
+				return err
+			}
+		case err := <-errc:
+			return err
+		case <-timer.C:
+			return fmt.Errorf("%w: no data for %s", errStreamStalled, idle)
+		}
+	}
 }
 
 func toolCallFromText(content string) (agent.ToolCall, bool) {
