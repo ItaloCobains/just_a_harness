@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -28,7 +29,15 @@ func capResult(s string) string {
 var (
 	ErrMaxTurns            = errors.New("harness: max turns exceeded")
 	ErrUpstreamUnavailable = errors.New("harness: upstream unavailable after retries")
+	ErrLoop                = errors.New("harness: tool-call loop detected")
 )
+
+// loopLimit is how many times the model may repeat the exact same tool-call turn
+// before Converse gives up.
+const loopLimit = 3
+
+const loopNudge = "You already ran this exact tool call and got the same result. " +
+	"Try a different approach or give your final answer."
 
 // ToolCall is a single request from the model to run a tool.
 type ToolCall struct {
@@ -99,6 +108,9 @@ func Converse(ctx context.Context, model Model, tools []Tool, history []Message,
 		byName[tool.Name] = tool
 	}
 
+	var lastSig string
+	repeat := 0
+
 	for range maxTurns {
 		if err := ctx.Err(); err != nil {
 			return history, "", err
@@ -115,6 +127,18 @@ func Converse(ctx context.Context, model Model, tools []Tool, history []Message,
 		}
 
 		if len(step.ToolCalls) > 0 {
+			if sig := callSignature(step.ToolCalls); sig == lastSig {
+				repeat++
+				if repeat >= loopLimit {
+					return history, "", ErrLoop
+				}
+				if repeat == 1 {
+					history = append(history, Message{Role: "system", Text: loopNudge})
+				}
+			} else {
+				lastSig, repeat = sig, 0
+			}
+
 			history = append(history, Message{Role: "assistant", ToolCalls: step.ToolCalls})
 			results := runTools(ctx, byName, step.ToolCalls, h)
 			for _, r := range results {
@@ -171,6 +195,10 @@ func runOne(ctx context.Context, byName map[string]Tool, call ToolCall, h Hooks)
 			call.Name, strings.Join(names, ", "))
 	}
 
+	if err := validateInput(tool, call.Input); err != nil {
+		return "error: " + err.Error()
+	}
+
 	out, err := tool.Func(ctx, call.Input)
 	if err != nil {
 		out = "error: " + err.Error()
@@ -179,6 +207,62 @@ func runOne(ctx context.Context, byName map[string]Tool, call ToolCall, h Hooks)
 		h.PostTool(call, out)
 	}
 	return out
+}
+
+// callSignature joins a turn's tool calls into a stable string so repeated,
+// identical turns can be detected.
+func callSignature(calls []ToolCall) string {
+	var b strings.Builder
+	for _, c := range calls {
+		b.WriteString(c.Name)
+		b.WriteByte(0)
+		b.WriteString(c.Input)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// validateInput checks that a tool call supplies every required argument before
+// the tool runs, so the model gets an actionable error instead of an opaque
+// failure deep inside the tool.
+func validateInput(tool Tool, input string) error {
+	required := requiredFields(tool.Schema)
+	if len(required) == 0 {
+		return nil
+	}
+	var args map[string]any
+	if json.Unmarshal([]byte(input), &args) != nil {
+		return fmt.Errorf("invalid JSON arguments for %s", tool.Name)
+	}
+	var missing []string
+	for _, key := range required {
+		v, ok := args[key]
+		if !ok || v == nil || v == "" {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s requires argument(s): %s", tool.Name, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// requiredFields reads the JSON-schema "required" list, tolerating both the
+// []string literals used in this codebase and the []any form from decoded JSON.
+func requiredFields(schema map[string]any) []string {
+	switch r := schema["required"].(type) {
+	case []string:
+		return r
+	case []any:
+		out := make([]string, 0, len(r))
+		for _, v := range r {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func Run(model Model, tools []Tool, system, input string) (string, error) {

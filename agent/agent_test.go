@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -281,5 +282,58 @@ func TestConversePreToolCanDeny(t *testing.T) {
 	second := model.seen[1]
 	if last := second[len(second)-1]; last.Text != "denied: blocked" {
 		t.Fatalf("expected denial result, got %q", last.Text)
+	}
+}
+
+// loopingModel always returns the same tool call, simulating a stuck model.
+type loopingModel struct {
+	step  Step
+	calls int
+}
+
+func (m *loopingModel) Next(_ context.Context, _ []Message, _ []Tool, _ func(string)) (Step, error) {
+	m.calls++
+	return m.step, nil
+}
+
+func TestConverseBreaksToolCallLoop(t *testing.T) {
+	model := &loopingModel{step: callStep("echo", "x")}
+	tools := []Tool{okTool("echo", func(s string) string { return s })}
+
+	_, _, err := Converse(context.Background(), model, tools, []Message{{Role: "user", Text: "go"}}, Hooks{})
+
+	if !errors.Is(err, ErrLoop) {
+		t.Fatalf("err = %v, want ErrLoop", err)
+	}
+	if model.calls >= maxTurns {
+		t.Fatalf("loop not broken early: %d calls", model.calls)
+	}
+}
+
+func TestRunValidatesRequiredArgs(t *testing.T) {
+	called := false
+	writer := Tool{
+		Name:   "writer",
+		Schema: map[string]any{"type": "object", "required": []string{"path"}},
+		Func: func(_ context.Context, _ string) (string, error) {
+			called = true
+			return "ok", nil
+		},
+	}
+	model := &FakeModel{steps: []Step{callStep("writer", "{}"), {Done: true, Text: "done"}}}
+
+	Run(model, []Tool{writer}, "", "go")
+
+	if called {
+		t.Fatal("tool ran despite missing required argument")
+	}
+	result := ""
+	for _, msg := range model.seen[1] {
+		if msg.Role == "tool" {
+			result = msg.Text
+		}
+	}
+	if !strings.Contains(result, "requires argument") || !strings.Contains(result, "path") {
+		t.Fatalf("expected actionable validation error, got %q", result)
 	}
 }
