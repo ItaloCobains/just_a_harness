@@ -5,10 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 const maxTurns = 25
+
+// maxToolResult caps how many characters of a tool's output are kept in the
+// conversation history. A single big read_file or web_fetch would otherwise
+// flood a small context window. The UI still observes the full output.
+const maxToolResult = 6000
+
+// capResult truncates oversized tool output stored in history, leaving a marker
+// so the model knows the result was cut.
+func capResult(s string) string {
+	if len(s) <= maxToolResult {
+		return s
+	}
+	return s[:maxToolResult] + "\n... [truncated, " + strconv.Itoa(len(s)-maxToolResult) + " more chars]"
+}
 
 var (
 	ErrMaxTurns            = errors.New("harness: max turns exceeded")
@@ -94,7 +109,7 @@ func Converse(ctx context.Context, model Model, tools []Tool, history []Message,
 			history = append(history, Message{Role: "assistant", ToolCalls: step.ToolCalls})
 			results := runTools(ctx, byName, step.ToolCalls, h)
 			for _, r := range results {
-				history = append(history, Message{Role: "tool", ToolID: r.call.ID, Text: r.output})
+				history = append(history, Message{Role: "tool", ToolID: r.call.ID, Text: capResult(r.output)})
 				if h.Observe != nil {
 					h.Observe(Event{Tool: r.call.Name, Input: r.call.Input, Result: r.output})
 				}

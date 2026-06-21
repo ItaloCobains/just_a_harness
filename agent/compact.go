@@ -2,9 +2,11 @@ package agent
 
 import "context"
 
-// compactThreshold is the message count above which Converse summarises the
-// older middle of the conversation to keep the context window from overflowing.
-const compactThreshold = 40
+// compactTokenBudget is the estimated token size above which Converse summarises
+// the older middle of the conversation to keep the context window from
+// overflowing. Counting tokens (not messages) means a few huge tool results
+// trigger compaction just like many small turns would.
+const compactTokenBudget = 12000
 
 // keepRecent is how many of the most recent messages survive compaction intact.
 const keepRecent = 12
@@ -12,11 +14,25 @@ const keepRecent = 12
 const summaryPrompt = `Summarise the conversation so far into a concise note that preserves
 decisions, file paths, and open tasks. Reply with the summary text only, no preamble.`
 
+// estimateTokens is a cheap ~4-chars-per-token approximation over the message
+// text and tool-call payloads. It is intentionally rough; it only needs to be
+// good enough to decide when to compact.
+func estimateTokens(history []Message) int {
+	chars := 0
+	for _, m := range history {
+		chars += len(m.Text)
+		for _, c := range m.ToolCalls {
+			chars += len(c.Name) + len(c.Input)
+		}
+	}
+	return chars / 4
+}
+
 // Compact summarises the old middle of history via the model, preserving the
 // leading system message and the most recent turns. If history is short or the
 // summary call fails, it returns history unchanged.
 func Compact(ctx context.Context, model Model, history []Message) []Message {
-	if len(history) <= compactThreshold {
+	if estimateTokens(history) <= compactTokenBudget {
 		return history
 	}
 
