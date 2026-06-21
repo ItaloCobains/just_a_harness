@@ -48,6 +48,11 @@ type Step struct {
 	Done      bool
 	Text      string
 	ToolCalls []ToolCall
+
+	// Usage reported by the backend for this step, when available.
+	PromptTokens int
+	EvalTokens   int
+	EvalNanos    int64
 }
 
 type Tool struct {
@@ -77,6 +82,7 @@ type Hooks struct {
 	Delta    func(string)
 	PreTool  func(call ToolCall) (deny bool, reason string)
 	PostTool func(call ToolCall, result string)
+	Usage    func(step Step) // fires after each model turn with token counts
 }
 
 type toolResult struct {
@@ -103,6 +109,9 @@ func Converse(ctx context.Context, model Model, tools []Tool, history []Message,
 		step, err := model.Next(ctx, history, tools, h.Delta)
 		if err != nil {
 			return history, "", err
+		}
+		if h.Usage != nil {
+			h.Usage(step)
 		}
 
 		if len(step.ToolCalls) > 0 {

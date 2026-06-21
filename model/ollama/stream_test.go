@@ -74,3 +74,21 @@ func TestStreamIdleTimeout(t *testing.T) {
 		t.Fatalf("err = %v, want errStreamStalled", err)
 	}
 }
+
+func TestParseStreamCapturesUsage(t *testing.T) {
+	ndjson := strings.Join([]string{
+		`{"message":{"role":"assistant","content":"hi"},"done":false}`,
+		`{"message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":1200,"eval_count":42,"eval_duration":2000000000}`,
+	}, "\n")
+
+	step, err := parseStream(strings.NewReader(ndjson), 0, nil)
+	if err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+	if step.PromptTokens != 1200 || step.EvalTokens != 42 {
+		t.Fatalf("usage = %d/%d, want 1200/42", step.PromptTokens, step.EvalTokens)
+	}
+	if step.EvalNanos != 2000000000 {
+		t.Fatalf("EvalNanos = %d", step.EvalNanos)
+	}
+}
