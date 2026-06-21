@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -114,5 +115,52 @@ func TestCompleteCommand(t *testing.T) {
 	}
 	if got := completeCommand("hi"); got != "" {
 		t.Fatalf("non-slash should return empty, got %q", got)
+	}
+}
+
+func TestSubmitQueuesWhileThinking(t *testing.T) {
+	m := sized()
+	m.thinking = true
+	m.ta.SetValue("do the next thing")
+
+	next, _ := m.submit()
+	nm := next.(model)
+
+	if len(nm.queue) != 1 || nm.queue[0] != "do the next thing" {
+		t.Fatalf("prompt not queued: %v", nm.queue)
+	}
+	if !strings.Contains(nm.render(), "queued") {
+		t.Fatalf("no queued hint shown:\n%s", nm.render())
+	}
+}
+
+func TestDequeueRunsSlashCommandInPlace(t *testing.T) {
+	m := sized()
+	m.queue = []string{"/help"}
+
+	cmd := m.dequeue()
+
+	if cmd != nil {
+		t.Fatal("a slash command should not start a turn")
+	}
+	if len(m.queue) != 0 {
+		t.Fatalf("queue not drained: %v", m.queue)
+	}
+	if !strings.Contains(m.render(), "/help") {
+		t.Fatalf("command not shown:\n%s", m.render())
+	}
+}
+
+func TestCtrlCClearsQueue(t *testing.T) {
+	m := sized()
+	_, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	m.thinking = true
+	m.queue = []string{"a", "b"}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	if q := next.(model).queue; len(q) != 0 {
+		t.Fatalf("Ctrl+C should clear the queue, got %v", q)
 	}
 }
