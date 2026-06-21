@@ -28,6 +28,7 @@ func main() {
 	model := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
 	model.HTTPClient = ollama.StreamingClient(cfg.HTTPTimeout)
 	model.MaxRetries = cfg.HTTPMaxRetries
+	model.Temperature = cfg.Temperature
 
 	approver := agentkit.LoadApprover()
 	tools := agentkit.CodingTools(model)

@@ -46,6 +46,7 @@ type Model struct {
 	MaxRetries  int
 	BackoffBase time.Duration
 	IdleTimeout time.Duration // max gap between streamed chunks before aborting
+	Temperature float64       // sampling temperature; low values steady tool calls
 }
 
 // New builds a Model for the given model name and endpoint with built-in
@@ -158,6 +159,7 @@ func (m Model) Next(ctx context.Context, messages []agent.Message, tools []agent
 		"model":    m.Model,
 		"messages": chat,
 		"stream":   true,
+		"options":  map[string]any{"temperature": m.Temperature},
 	}
 	if len(tools) > 0 {
 		defs := make([]map[string]any, 0, len(tools))
@@ -191,7 +193,10 @@ type chatChunk struct {
 			} `json:"function"`
 		} `json:"tool_calls"`
 	} `json:"message"`
-	Done bool `json:"done"`
+	Done            bool  `json:"done"`
+	PromptEvalCount int   `json:"prompt_eval_count"`
+	EvalCount       int   `json:"eval_count"`
+	EvalDuration    int64 `json:"eval_duration"`
 }
 
 func parseStream(r io.Reader, idle time.Duration, onDelta func(string)) (agent.Step, error) {
@@ -203,6 +208,7 @@ func parseStream(r io.Reader, idle time.Duration, onDelta func(string)) (agent.S
 	// reveals whether this turn is prose or a tool call, so the raw JSON never
 	// leaks into the UI.
 	decided, suppress := false, false
+	var usage agent.Step // accumulates token counts reported in the final chunk
 	emit := func(s string) {
 		if onDelta != nil && !suppress {
 			onDelta(s)
@@ -217,6 +223,15 @@ func parseStream(r io.Reader, idle time.Duration, onDelta func(string)) (agent.S
 		var chunk chatChunk
 		if err := json.Unmarshal(line, &chunk); err != nil {
 			return err
+		}
+		if chunk.PromptEvalCount > 0 {
+			usage.PromptTokens = chunk.PromptEvalCount
+		}
+		if chunk.EvalCount > 0 {
+			usage.EvalTokens = chunk.EvalCount
+		}
+		if chunk.EvalDuration > 0 {
+			usage.EvalNanos = chunk.EvalDuration
 		}
 		if chunk.Message.Content != "" {
 			content.WriteString(chunk.Message.Content)
@@ -245,16 +260,20 @@ func parseStream(r io.Reader, idle time.Duration, onDelta func(string)) (agent.S
 	}
 
 	if len(calls) > 0 {
-		return agent.Step{ToolCalls: calls}, nil
+		usage.ToolCalls = calls
+		return usage, nil
 	}
 
 	// Alguns modelos (qwen2.5-coder) emitem a chamada como texto no content
 	// em vez de usar o canal nativo. Tolera esse formato.
 	if call, ok := toolCallFromText(content.String()); ok {
-		return agent.Step{ToolCalls: []agent.ToolCall{call}}, nil
+		usage.ToolCalls = []agent.ToolCall{call}
+		return usage, nil
 	}
 
-	return agent.Step{Done: true, Text: content.String()}, nil
+	usage.Done = true
+	usage.Text = content.String()
+	return usage, nil
 }
 
 // scanLines reads NDJSON lines from r, calling process for each. When idle > 0,

@@ -21,6 +21,7 @@ type Config struct {
 	OllamaEndpoint string
 	HTTPTimeout    time.Duration
 	HTTPMaxRetries int
+	Temperature    float64
 }
 
 // Load reads the HARNESS_* environment variables, using the built-in defaults
@@ -31,6 +32,7 @@ func Load() Config {
 		OllamaEndpoint: env("HARNESS_ENDPOINT", defaultEndpoint),
 		HTTPTimeout:    envDuration("HARNESS_HTTP_TIMEOUT", defaultTimeout),
 		HTTPMaxRetries: envInt("HARNESS_HTTP_MAX_RETRIES", defaultMaxRetries),
+		Temperature:    envFloat("HARNESS_TEMPERATURE", 0),
 	}
 }
 
@@ -54,6 +56,15 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

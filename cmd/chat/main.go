@@ -27,6 +27,8 @@ type toolMsg agent.Event
 
 type deltaMsg string
 
+type usageMsg agent.Step
+
 // approvalReq is sent by a gated tool goroutine and answered by the UI thread.
 type approvalReq struct {
 	name  string
@@ -65,7 +67,8 @@ type model struct {
 	cancel      context.CancelFunc
 	pending     *approvalReq
 	start       time.Time
-	agentIdx    int // transcript index of the current Agent bubble, -1 when none
+	usage       agent.Step // latest token counts from the model
+	agentIdx    int        // transcript index of the current Agent bubble, -1 when none
 	streaming   bool
 	thinking    bool
 	ready       bool
@@ -84,6 +87,7 @@ func initialModel(resume string) model {
 	llm := ollama.New(cfg.OllamaModel, cfg.OllamaEndpoint)
 	llm.HTTPClient = ollama.StreamingClient(cfg.HTTPTimeout)
 	llm.MaxRetries = cfg.HTTPMaxRetries
+	llm.Temperature = cfg.Temperature
 	approver := agentkit.LoadApprover()
 	sub := make(chan tea.Msg, 64)
 
@@ -169,6 +173,19 @@ func (m model) Init() tea.Cmd { return textarea.Blink }
 
 func waitFor(sub chan tea.Msg) tea.Cmd {
 	return func() tea.Msg { return <-sub }
+}
+
+// usageLine summarises the latest token counts: context size, generated tokens,
+// and generation speed. Empty when the backend reported nothing.
+func usageLine(u agent.Step) string {
+	if u.PromptTokens == 0 && u.EvalTokens == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("ctx %d tok · %d generated", u.PromptTokens, u.EvalTokens)
+	if u.EvalNanos > 0 && u.EvalTokens > 0 {
+		s += fmt.Sprintf(" · %.0f tok/s", float64(u.EvalTokens)/(float64(u.EvalNanos)/1e9))
+	}
+	return s
 }
 
 // toolSummary renders a tool call as "name · key: value, ..." instead of raw
@@ -313,6 +330,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	case usageMsg:
+		if msg.PromptTokens > 0 {
+			m.usage = agent.Step(msg)
+		}
+		return m, waitFor(m.sub)
+
 	case approvalReq:
 		m.pending = &msg
 		if preview := toolPreview(msg.name, msg.input); preview != "" {
@@ -358,6 +381,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.push(hintStyle.Render("(agent finished without a message)"))
 			}
 			m.agentIdx = -1
+			if stats := usageLine(m.usage); stats != "" {
+				m.push(hintStyle.Render(stats))
+			}
 			m.history = msg.history
 			if _, err := agentkit.SaveSession(m.sessionName, m.history); err != nil {
 				m.push(hintStyle.Render("session not saved: " + err.Error()))
@@ -413,6 +439,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 		out, answer, err := agent.Converse(ctx, llm, tools, hist, agent.Hooks{
 			Observe: func(e agent.Event) { sub <- toolMsg(e) },
 			Delta:   func(s string) { sub <- deltaMsg(s) },
+			Usage:   func(s agent.Step) { sub <- usageMsg(s) },
 		})
 		sub <- doneMsg{out, answer, err}
 	}()
