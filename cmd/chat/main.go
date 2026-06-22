@@ -532,7 +532,10 @@ func main() {
 	resume := flag.String("resume", "", "resume a saved session: a name, or \"latest\"")
 	flag.Parse()
 
-	p := tea.NewProgram(initialModel(*resume), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Mouse capture is intentionally off: legacy mouse-motion reports can leak
+	// their coordinate bytes into the input buffer as stray characters. Scroll
+	// the history with PgUp/PgDown instead.
+	p := tea.NewProgram(initialModel(*resume), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("error:", err)
 	}
