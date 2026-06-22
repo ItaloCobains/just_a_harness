@@ -63,6 +63,7 @@ type model struct {
 	history     []agent.Message
 	sessionName string
 	transcript  []string
+	queue       []string // prompts waiting to run after the current turn
 	sub         chan tea.Msg
 	cancel      context.CancelFunc
 	pending     *approvalReq
@@ -348,6 +349,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.thinking && m.cancel != nil {
 				m.cancel()
+				m.queue = nil // Ctrl+C stops everything, including the queue
 				return m, nil
 			}
 			return m, tea.Quit
@@ -428,7 +430,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.push(hintStyle.Render("session not saved: " + err.Error()))
 			}
 		}
-		return m, nil
+		return m, m.dequeue()
 	}
 
 	var tcmd, vcmd tea.Cmd
@@ -448,24 +450,45 @@ func (m model) answerApproval(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) submit() (tea.Model, tea.Cmd) {
-	if m.thinking {
-		return m, nil
-	}
 	input := strings.TrimSpace(m.ta.Value())
 	if input == "" {
 		return m, nil
 	}
 	m.ta.Reset()
-	m.push(userStyle.Render("You") + "\n" + input)
+	m.queue = append(m.queue, input)
 
-	if res := agentkit.HandleCommand(input, m.history, m.tools); res.Handled {
-		if res.History != nil {
-			m.history = res.History
-		}
-		m.push(hintStyle.Render(res.Reply))
+	// Busy: queue the prompt to run after the current turn finishes.
+	if m.thinking || m.pending != nil {
+		m.push(hintStyle.Render("queued: " + input))
 		return m, nil
 	}
+	return m, m.dequeue()
+}
 
+// dequeue runs the next queued prompt: slash commands resolve in place and the
+// loop continues; an ordinary prompt starts a turn whose doneMsg will dequeue
+// again. Returns nil when the queue is empty.
+func (m *model) dequeue() tea.Cmd {
+	for len(m.queue) > 0 {
+		input := m.queue[0]
+		m.queue = m.queue[1:]
+		m.push(userStyle.Render("You") + "\n" + input)
+
+		if res := agentkit.HandleCommand(input, m.history, m.tools); res.Handled {
+			if res.History != nil {
+				m.history = res.History
+			}
+			m.push(hintStyle.Render(res.Reply))
+			continue
+		}
+		return m.startConverse(input)
+	}
+	return nil
+}
+
+// startConverse begins an agent turn for input and returns the command that
+// pumps its streamed messages.
+func (m *model) startConverse(input string) tea.Cmd {
 	m.thinking = true
 	m.start = time.Now()
 	m.history = append(m.history, agent.Message{Role: "user", Text: input})
@@ -482,7 +505,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 		})
 		sub <- doneMsg{out, answer, err}
 	}()
-	return m, tea.Batch(waitFor(m.sub), m.spinner.Tick)
+	return tea.Batch(waitFor(m.sub), m.spinner.Tick)
 }
 
 func (m model) View() string {
@@ -494,7 +517,11 @@ func (m model) View() string {
 		status = statusStyle.Render("● awaiting approval")
 	} else if m.thinking {
 		elapsed := int(time.Since(m.start).Seconds())
-		status = m.spinner.View() + statusStyle.Render(fmt.Sprintf("thinking %ds · Ctrl+C to interrupt", elapsed))
+		label := fmt.Sprintf("thinking %ds · Ctrl+C to interrupt", elapsed)
+		if n := len(m.queue); n > 0 {
+			label += fmt.Sprintf(" · %d queued", n)
+		}
+		status = m.spinner.View() + statusStyle.Render(label)
 	} else if menu := commandMenu(m.ta.Value()); menu != "" {
 		status = menu
 	}
